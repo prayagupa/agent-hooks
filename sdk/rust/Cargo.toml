@@ -1,0 +1,24 @@
+[package]
+name = "agent-hooks"
+version = "0.1.0-alpha.1"
+edition = "2021"
+rust-version = "1.75"
+license = "MIT"
+description = "Framework-neutral agent lifecycle hook contract (AGENT-HOOKS-0.1)"
+repository = "https://github.com/responsibleai/agent-hooks"
+keywords = ["ai-agents", "governance", "hooks", "lifecycle"]
+categories = ["api-bindings"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "1"
+async-trait = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }
+
+[features]
+default = []
+ctk = []

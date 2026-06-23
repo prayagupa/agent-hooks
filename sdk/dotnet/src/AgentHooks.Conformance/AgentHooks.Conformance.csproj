@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>ResponsibleAI.AgentHooks.Conformance</PackageId>
+    <Description>Conformance Test Kit harness contract for AGENT-HOOKS-0.1 (§13.2).</Description>
+    <RootNamespace>AgentHooks.Conformance</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\AgentHooks\AgentHooks.csproj" />
+  </ItemGroup>
+</Project>

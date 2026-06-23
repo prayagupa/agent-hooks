@@ -1,0 +1,24 @@
+{
+  "id": "AH-CTK-003",
+  "title": "sequence is strictly increasing across all hooks",
+  "spec_clause": "3.1.6, 4.1",
+  "level": 1,
+  "capabilities": ["model_calls"],
+  "scenario": {
+    "input": { "content": "hi", "role": "user" },
+    "model_script": [ { "respond": { "content": "hi", "tool_calls": [], "finish_reason": "stop" } } ]
+  },
+  "consumer_script": [],
+  "expect": {
+    "sequence_strict": true,
+    "hooks": [
+      { "hook_point": "agent_startup", "context": { "sequence": 0 } },
+      { "hook_point": "input", "context": { "sequence": 1 } },
+      { "hook_point": "pre_model_call", "context": { "sequence": 2 } },
+      { "hook_point": "post_model_call", "context": { "sequence": 3 } },
+      { "hook_point": "output", "context": { "sequence": 4 } },
+      { "hook_point": "agent_shutdown", "context": { "sequence": 5 } }
+    ],
+    "run_outcome": "completed"
+  }
+}

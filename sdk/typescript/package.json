@@ -1,0 +1,28 @@
+{
+  "name": "@responsibleai/agent-hooks",
+  "version": "0.1.0-alpha.1",
+  "description": "Framework-neutral agent lifecycle hook contract (AGENT-HOOKS-0.1)",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./ctk": "./dist/ctk/index.js"
+  },
+  "files": ["dist", "schema"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/responsibleai/agent-hooks.git",
+    "directory": "sdk/typescript"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "tsc --noEmit && node --test"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "@types/node": "^22.0.0"
+  },
+  "engines": { "node": ">=20" }
+}

@@ -1,0 +1,59 @@
+{
+  "$id": "https://agent-hooks.responsibleai.dev/v0.1/approval.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Agent Hooks — approval seam",
+  "description": "Approval request and resolution shapes for the escalate verdict (AGENT-HOOKS-0.1 §9).",
+  "$defs": {
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["context_identity", "hook_point", "verdict"],
+      "properties": {
+        "context_identity": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "hook_point": { "$ref": "hook-point.schema.json" },
+        "verdict": { "$ref": "verdict.schema.json" },
+        "context": {
+          "description": "The HookContext that produced the escalate verdict. MAY be redacted per host policy.",
+          "$ref": "hook-context.schema.json"
+        }
+      }
+    },
+    "resolution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outcome", "context_identity"],
+      "properties": {
+        "outcome": { "type": "string", "enum": ["approve", "reject", "unresolved"] },
+        "context_identity": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "verdict": { "$ref": "verdict.schema.json" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "outcome": { "const": "unresolved" } } },
+          "then": { "not": { "required": ["verdict"] } },
+          "else": { "required": ["verdict"] }
+        },
+        {
+          "if": { "properties": { "outcome": { "const": "approve" } } },
+          "then": {
+            "properties": {
+              "verdict": {
+                "properties": { "decision": { "enum": ["allow", "warn", "transform"] } }
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "outcome": { "const": "reject" } } },
+          "then": {
+            "properties": {
+              "verdict": {
+                "properties": { "decision": { "const": "deny" } }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

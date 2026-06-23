@@ -1,0 +1,73 @@
+{
+  "$id": "https://agent-hooks.responsibleai.dev/v0.1/verdict.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Agent Hooks — verdict",
+  "description": "Consumer return value (AGENT-HOOKS-0.1 §5). Extracted from ACS verdict.schema.json; replaces $policy_target with $target (alias accepted) and reserves hook_error:* for host-synthesized reasons.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["decision"],
+  "properties": {
+    "decision": {
+      "type": "string",
+      "enum": ["allow", "deny", "warn", "escalate", "transform"]
+    },
+    "reason": {
+      "type": ["string", "null"],
+      "pattern": "^(?!hook_error:).*",
+      "description": "Consumer-supplied machine identifier. The hook_error: prefix is reserved for host-synthesized failures (§11)."
+    },
+    "message": {
+      "type": ["string", "null"],
+      "description": "Human-readable text for the caller."
+    },
+    "transform": {
+      "$ref": "#/$defs/transform"
+    },
+    "evidence": {
+      "$ref": "#/$defs/evidence"
+    },
+    "result_labels": {
+      "type": ["array", "null"],
+      "items": { "type": "string" },
+      "description": "Consumer-supplied labels the host MUST persist with the produced data and resurface on later hooks (§5.4)."
+    }
+  },
+  "allOf": [
+    {
+      "description": "transform body REQUIRED iff decision == transform (§5).",
+      "if": { "properties": { "decision": { "const": "transform" } } },
+      "then": { "required": ["transform"] },
+      "else": { "not": { "required": ["transform"] } }
+    }
+  ],
+  "$defs": {
+    "transform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "value"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^\\$(target|policy_target)(\\.|\\[|$)",
+          "description": "JSONPath rooted at $target (§5.2). $policy_target is a deprecated alias accepted through agent-hooks v0.2."
+        },
+        "value": true
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "artefact": {
+          "type": ["string", "null"],
+          "description": "Content address (sha256:<hex>) or URI of an offline-verifiable proof."
+        },
+        "verification_pointers": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Named URIs an auditor MAY consult. Hosts MUST NOT dereference automatically (§14)."
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "id": "AH-CTK-012",
+  "title": "deny at output prevents response from being returned",
+  "spec_clause": "6",
+  "level": 2,
+  "capabilities": ["model_calls"],
+  "scenario": {
+    "input": { "content": "tell me a secret", "role": "user" },
+    "model_script": [ { "respond": { "content": "the secret is X", "tool_calls": [], "finish_reason": "stop" } } ]
+  },
+  "consumer_script": [
+    { "at": "output", "return": { "decision": "deny", "reason": "ctk:output_blocked" } }
+  ],
+  "expect": {
+    "sequence_strict": true,
+    "hooks": [
+      { "hook_point": "agent_startup" },
+      { "hook_point": "input" },
+      { "hook_point": "pre_model_call" },
+      { "hook_point": "post_model_call" },
+      { "hook_point": "output", "context": { "output.content": "the secret is X" } },
+      { "hook_point": "agent_shutdown" }
+    ],
+    "final_output": null,
+    "run_outcome": "blocked"
+  }
+}

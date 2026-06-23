@@ -427,3 +427,29 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# ---- agent-hooks polyglot additions ---------------------------------------
+
+# Python
+.venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+
+# Rust
+target/
+Cargo.lock
+
+# TypeScript build output
+sdk/typescript/dist/
+
+# Go
+sdk/go/**/*.test
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store

@@ -1,0 +1,79 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  schema-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - run: npm install -g ajv-cli@5
+      - name: Validate schemas are well-formed
+        run: |
+          for f in spec/schema/*.json spec/schema/hook-context/*.json conformance/vectors.schema.json; do
+            ajv compile --spec=draft2020 -s "$f" -r 'spec/schema/*.json'
+          done
+      - name: Validate vectors against vectors.schema.json
+        run: |
+          ajv validate --spec=draft2020 \
+            -s conformance/vectors.schema.json \
+            -r 'spec/schema/*.json' \
+            -d 'conformance/vectors/*.json'
+
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - uses: astral-sh/setup-uv@v3
+      - run: uv pip install --system -e ./sdk/python[ctk,dev]
+      - run: ruff check sdk/python
+      - run: pytest sdk/python/tests -p no:agent_hooks_ctk -v
+
+  typescript:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - run: npm ci
+        working-directory: sdk/typescript
+      - run: npx tsc --noEmit
+        working-directory: sdk/typescript
+
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with: { components: clippy }
+      - run: cargo clippy --all-features -- -D warnings
+        working-directory: sdk/rust
+      - run: cargo test --all-features
+        working-directory: sdk/rust
+
+  dotnet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: "8.0.x" }
+      - run: dotnet build -warnaserror
+        working-directory: sdk/dotnet
+
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.22" }
+      - run: go build ./...
+        working-directory: sdk/go
+      - run: go vet ./...
+        working-directory: sdk/go

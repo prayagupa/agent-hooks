@@ -1,0 +1,28 @@
+{
+  "id": "AH-CTK-002",
+  "title": "Loop without tool calls omits pre/post_tool_call",
+  "spec_clause": "3.1, 3.2",
+  "level": 1,
+  "capabilities": ["model_calls"],
+  "scenario": {
+    "input": { "content": "say hello", "role": "user" },
+    "tools": [],
+    "model_script": [
+      { "respond": { "content": "Hello!", "tool_calls": [], "finish_reason": "stop" } }
+    ]
+  },
+  "consumer_script": [],
+  "expect": {
+    "sequence_strict": true,
+    "hooks": [
+      { "hook_point": "agent_startup", "context": { "agent_init.tools_registered": [] } },
+      { "hook_point": "input" },
+      { "hook_point": "pre_model_call" },
+      { "hook_point": "post_model_call", "context": { "response.tool_calls": [] } },
+      { "hook_point": "output", "context": { "output.content": "Hello!" } },
+      { "hook_point": "agent_shutdown", "context": { "summary.reason": "completed" } }
+    ],
+    "hooks_absent": ["pre_tool_call", "post_tool_call"],
+    "run_outcome": "completed"
+  }
+}

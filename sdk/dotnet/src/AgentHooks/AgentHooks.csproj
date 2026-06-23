@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>ResponsibleAI.AgentHooks</PackageId>
+    <Description>Framework-neutral agent lifecycle hook contract (AGENT-HOOKS-0.1).</Description>
+    <RootNamespace>AgentHooks</RootNamespace>
+  </PropertyGroup>
+</Project>

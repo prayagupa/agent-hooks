@@ -1,0 +1,184 @@
+{
+  "$id": "https://agent-hooks.responsibleai.dev/v0.1/conformance/vectors.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Agent Hooks — CTK vector",
+  "description": "Language-agnostic conformance test case (AGENT-HOOKS-0.1 §13.2).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "title", "spec_clause", "level", "scenario", "consumer_script", "expect"],
+  "properties": {
+    "id": { "type": "string", "pattern": "^AH-CTK-[0-9]{3}(-[a-z0-9-]+)?$" },
+    "title": { "type": "string" },
+    "spec_clause": { "type": "string", "description": "Section of AGENT-HOOKS-0.1 this vector verifies." },
+    "level": { "type": "integer", "enum": [1, 2, 3] },
+    "mode": {
+      "type": "string",
+      "enum": ["enforce", "evaluate_only"],
+      "default": "enforce",
+      "description": "Enforcement mode the harness MUST set for this run (§8)."
+    },
+    "capabilities": {
+      "type": "array",
+      "items": { "type": "string", "enum": ["model_calls", "tool_calls", "parallel_tool_calls", "streaming", "multi_turn"] },
+      "default": []
+    },
+    "scenario": { "$ref": "#/$defs/scenario" },
+    "consumer_script": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/consumer_rule" }
+    },
+    "approval_script": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/approval_rule" },
+      "default": []
+    },
+    "expect": { "$ref": "#/$defs/expect" }
+  },
+  "$defs": {
+    "scenario": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["input"],
+      "properties": {
+        "input": {
+          "type": "object",
+          "required": ["content", "role"],
+          "properties": {
+            "content": true,
+            "role": { "type": "string", "enum": ["user", "system", "external"] }
+          }
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "behavior"],
+            "properties": {
+              "name": { "type": "string" },
+              "schema": { "type": "object" },
+              "behavior": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["return"],
+                  "properties": {
+                    "when_args": { "type": "object" },
+                    "return": true,
+                    "is_error": { "type": "boolean", "default": false }
+                  }
+                }
+              }
+            }
+          },
+          "default": []
+        },
+        "model_script": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["respond"],
+            "properties": {
+              "respond": {
+                "type": "object",
+                "required": ["content", "tool_calls", "finish_reason"],
+                "properties": {
+                  "content": true,
+                  "tool_calls": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": ["id", "name", "args"],
+                      "properties": {
+                        "id": { "type": "string" },
+                        "name": { "type": "string" },
+                        "args": { "type": "object" }
+                      }
+                    }
+                  },
+                  "finish_reason": { "type": "string" }
+                }
+              }
+            }
+          },
+          "default": []
+        }
+      }
+    },
+    "consumer_rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["at", "return"],
+      "properties": {
+        "at": { "$ref": "../spec/schema/hook-point.schema.json" },
+        "match": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "Dotted-path -> expected-value predicates against the HookContext. All must match."
+        },
+        "return": { "$ref": "../spec/schema/verdict.schema.json" }
+      }
+    },
+    "approval_rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["resolve"],
+      "properties": {
+        "match": { "type": "object", "additionalProperties": true },
+        "resolve": {
+          "type": "object",
+          "required": ["outcome"],
+          "properties": {
+            "outcome": { "type": "string", "enum": ["approve", "reject", "unresolved"] },
+            "verdict": { "$ref": "../spec/schema/verdict.schema.json" }
+          }
+        }
+      }
+    },
+    "expect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hooks", "run_outcome"],
+      "properties": {
+        "hooks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["hook_point"],
+            "properties": {
+              "hook_point": { "$ref": "../spec/schema/hook-point.schema.json" },
+              "context": {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "Dotted-path -> expected-value assertions against the recorded HookContext."
+              },
+              "context_must_validate": { "type": "boolean", "default": true }
+            }
+          }
+        },
+        "sequence_strict": { "type": "boolean", "default": true },
+        "hooks_absent": {
+          "type": "array",
+          "items": { "$ref": "../spec/schema/hook-point.schema.json" }
+        },
+        "tool_invocations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "args"],
+            "properties": {
+              "name": { "type": "string" },
+              "args": { "type": "object" }
+            }
+          }
+        },
+        "tool_not_invoked": { "type": "array", "items": { "type": "string" } },
+        "final_output": true,
+        "run_outcome": { "type": "string", "enum": ["completed", "blocked", "suspended", "error"] },
+        "identities_equal": {
+          "type": "boolean",
+          "description": "Assert input_identity == enforced_identity for all hooks (false to assert they differ at some hook)."
+        }
+      }
+    }
+  }
+}
