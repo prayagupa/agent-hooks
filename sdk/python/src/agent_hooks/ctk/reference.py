@@ -8,9 +8,9 @@ CTK can self-test without depending on any real framework.
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import Any, ClassVar
 
-from agent_hooks._types import EnforcementMode, HookPoint
+from agent_hooks._types import EnforcementMode
 from agent_hooks.approval import ApprovalResolver
 from agent_hooks.consumer import HookConsumer
 from agent_hooks.context import HookContextBuilder
@@ -23,7 +23,9 @@ class ReferenceHarness:
     """A ~100-line Level-2 host. Self-test target for the CTK."""
 
     name = "reference-agent"
-    capabilities = {Capability.MODEL_CALLS, Capability.TOOL_CALLS}
+    capabilities: ClassVar[frozenset[Capability]] = frozenset(
+        {Capability.MODEL_CALLS, Capability.TOOL_CALLS}
+    )
 
     def __init__(self) -> None:
         self._scenario: Scenario | None = None
@@ -64,7 +66,7 @@ class ReferenceHarness:
             ]
             for resp in s.model_script:
                 ctx = b.pre_model_call(model_id="mock", messages=list(messages))
-                r = await em.emit_or_raise(ctx)
+                await em.emit_or_raise(ctx)
                 messages = ctx["messages"]  # may be transformed
                 await em.emit_or_raise(
                     b.post_model_call(
@@ -91,14 +93,11 @@ class ReferenceHarness:
                 messages.append({"role": "assistant", "content": resp.content or ""})
             if final is not None:
                 ctx = b.output(content=final)
-                r = await em.emit_or_raise(ctx)
+                await em.emit_or_raise(ctx)
                 final = ctx["output"]["content"]
-        except HookBlocked as e:
+        except HookBlocked:
             outcome = RunOutcome.BLOCKED
-            if e.hook_point in {HookPoint.OUTPUT}:
-                final = None
-            else:
-                final = None
+            final = None
         await em.emit(
             b.agent_shutdown(
                 reason="completed" if outcome is RunOutcome.COMPLETED else "error"

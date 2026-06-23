@@ -11,7 +11,7 @@ from typing import Any
 _SCHEMA_DIR = pathlib.Path(__file__).resolve().parents[1] / "schema"
 
 
-@functools.lru_cache(maxsize=None)
+@functools.cache
 def _load(name: str) -> dict[str, Any]:
     return json.loads((_SCHEMA_DIR / name).read_text())
 

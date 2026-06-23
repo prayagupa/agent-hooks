@@ -12,17 +12,22 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: "22" }
-      - run: npm install -g ajv-cli@5
+      - run: npm install -g ajv-cli@5 ajv-formats@3
       - name: Validate schemas are well-formed
         run: |
-          for f in spec/schema/*.json spec/schema/hook-context/*.json conformance/vectors.schema.json; do
-            ajv compile --spec=draft2020 -s "$f" -r 'spec/schema/*.json'
+          set -e
+          all="spec/schema/*.json spec/schema/hook-context/*.json conformance/vectors.schema.json"
+          for f in $all; do
+            # -r must not include the file under -s (ajv rejects duplicate $id)
+            refs=$(ls $all | grep -vxF "$f" | sed 's/^/-r /' | tr '\n' ' ')
+            ajv compile --spec=draft2020 -c ajv-formats -s "$f" $refs
           done
       - name: Validate vectors against vectors.schema.json
         run: |
-          ajv validate --spec=draft2020 \
+          ajv validate --spec=draft2020 -c ajv-formats \
             -s conformance/vectors.schema.json \
             -r 'spec/schema/*.json' \
+            -r 'spec/schema/hook-context/*.json' \
             -d 'conformance/vectors/*.json'
 
   python:

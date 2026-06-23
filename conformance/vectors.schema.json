@@ -109,13 +109,13 @@
       "additionalProperties": false,
       "required": ["at", "return"],
       "properties": {
-        "at": { "$ref": "../spec/schema/hook-point.schema.json" },
+        "at": { "$ref": "https://agent-hooks.responsibleai.dev/v0.1/hook-point.schema.json" },
         "match": {
           "type": "object",
           "additionalProperties": true,
           "description": "Dotted-path -> expected-value predicates against the HookContext. All must match."
         },
-        "return": { "$ref": "../spec/schema/verdict.schema.json" }
+        "return": { "$ref": "https://agent-hooks.responsibleai.dev/v0.1/verdict.schema.json" }
       }
     },
     "approval_rule": {
@@ -129,7 +129,7 @@
           "required": ["outcome"],
           "properties": {
             "outcome": { "type": "string", "enum": ["approve", "reject", "unresolved"] },
-            "verdict": { "$ref": "../spec/schema/verdict.schema.json" }
+            "verdict": { "$ref": "https://agent-hooks.responsibleai.dev/v0.1/verdict.schema.json" }
           }
         }
       }
@@ -145,7 +145,7 @@
             "type": "object",
             "required": ["hook_point"],
             "properties": {
-              "hook_point": { "$ref": "../spec/schema/hook-point.schema.json" },
+              "hook_point": { "$ref": "https://agent-hooks.responsibleai.dev/v0.1/hook-point.schema.json" },
               "context": {
                 "type": "object",
                 "additionalProperties": true,
@@ -158,7 +158,7 @@
         "sequence_strict": { "type": "boolean", "default": true },
         "hooks_absent": {
           "type": "array",
-          "items": { "$ref": "../spec/schema/hook-point.schema.json" }
+          "items": { "$ref": "https://agent-hooks.responsibleai.dev/v0.1/hook-point.schema.json" }
         },
         "tool_invocations": {
           "type": "array",

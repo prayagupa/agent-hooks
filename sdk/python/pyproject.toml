@@ -45,7 +45,10 @@ line-length = 100
 target-version = "py310"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "B", "UP", "C4", "SIM", "RUF"]
+select = ["E", "F", "W", "I", "B", "UP", "C4", "SIM", "RUF", "BLE"]
+ignore = [
+  "RUF002",  # en-dash in docstrings is intentional (spec section ranges)
+]
 
 [tool.mypy]
 strict = true

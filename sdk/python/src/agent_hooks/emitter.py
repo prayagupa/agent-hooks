@@ -25,7 +25,8 @@ from agent_hooks.canonical import context_identity
 from agent_hooks.consumer import HookConsumer
 from agent_hooks.context import HookContext
 from agent_hooks.exceptions import HookBlocked
-from agent_hooks.path import PathError, apply as apply_path
+from agent_hooks.path import PathError
+from agent_hooks.path import apply as apply_path
 
 
 class HookEmitter:
@@ -46,7 +47,7 @@ class HookEmitter:
     :attr:`HookResult.proceeds` (or calls :meth:`emit_or_raise`).
     """
 
-    __slots__ = ("_consumers", "_resolver", "_mode", "_results")
+    __slots__ = ("_consumers", "_mode", "_resolver", "_results")
 
     def __init__(
         self,

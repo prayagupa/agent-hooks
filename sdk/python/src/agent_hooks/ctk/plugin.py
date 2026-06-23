@@ -49,7 +49,7 @@ def agent_hooks_harness(request: pytest.FixtureRequest) -> type:
 
 
 @pytest.fixture
-def agent_hooks_assert(agent_hooks_harness: type, agent_hooks_vector: dict) -> None:  # noqa: PT004
+def agent_hooks_assert(agent_hooks_harness: type, agent_hooks_vector: dict) -> None:
     """Drop-in fixture that runs one vector and asserts/skips.
 
     Usage in a downstream test module::

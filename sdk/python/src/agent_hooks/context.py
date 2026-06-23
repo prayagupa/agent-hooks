@@ -30,7 +30,7 @@ class HookContextBuilder:
     code never has to thread them. One instance per session.
     """
 
-    __slots__ = ("_agent", "_session", "_seq", "_l2")
+    __slots__ = ("_agent", "_l2", "_seq", "_session")
 
     def __init__(
         self,
