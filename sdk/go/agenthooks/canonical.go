@@ -14,10 +14,10 @@ import (
 )
 
 var (
-	l0        = set("spec", "hook_point", "timestamp", "sequence", "agent", "session", "target")
+	l0        = set("spec", "interception_point", "timestamp", "sequence", "agent", "session", "target")
 	l0Agent   = set("id", "framework")
 	l0Session = set("id")
-	l1        = map[HookPoint][]string{
+	l1        = map[InterceptionPoint][]string{
 		AgentStartup:  {"agent_init"},
 		Input:         {"input"},
 		PreModelCall:  {"model", "messages"},
@@ -98,7 +98,7 @@ func encode(v any, sb *strings.Builder) error {
 			}
 		}
 		sb.WriteByte('}')
-	case HookContext:
+	case AgentContext:
 		return encode(map[string]any(x), sb)
 	default:
 		// Round-trip through encoding/json to a generic any then re-encode.
@@ -133,7 +133,7 @@ func encodeNumber(x float64, sb *strings.Builder) error {
 
 // ContextIdentity returns "sha256:" + hex(SHA-256(CanonicalJSON(ctx_L01)))
 // (§10.2).
-func ContextIdentity(ctx HookContext) (string, error) {
+func ContextIdentity(ctx AgentContext) (string, error) {
 	stripped := stripToL01(ctx)
 	js, err := CanonicalJSON(stripped)
 	if err != nil {
@@ -143,8 +143,8 @@ func ContextIdentity(ctx HookContext) (string, error) {
 	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
-func stripToL01(ctx HookContext) map[string]any {
-	hp := ctx.HookPoint()
+func stripToL01(ctx AgentContext) map[string]any {
+	hp := ctx.InterceptionPoint()
 	keep := make(map[string]struct{}, len(l0)+4)
 	for k := range l0 {
 		keep[k] = struct{}{}

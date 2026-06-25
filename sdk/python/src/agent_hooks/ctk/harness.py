@@ -9,7 +9,7 @@ from typing import Any, Protocol
 
 from agent_hooks._types import EnforcementMode
 from agent_hooks.approval import ApprovalResolver
-from agent_hooks.consumer import HookConsumer
+from agent_hooks.interceptor import Interceptor
 
 
 class Capability(str, Enum):
@@ -114,7 +114,7 @@ class Harness(Protocol):
     def setup(
         self,
         scenario: Scenario,
-        consumer: HookConsumer,
+        interceptor: Interceptor,
         resolver: ApprovalResolver | None,
         mode: EnforcementMode,
     ) -> None: ...

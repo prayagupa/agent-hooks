@@ -12,8 +12,8 @@ from typing import Any
 from agent_hooks._types import EnforcementMode
 from agent_hooks.ctk.harness import Capability, Harness, RunRecord, Scenario
 from agent_hooks.ctk.scripted import (
-    RecordingConsumer,
-    ScriptedConsumer,
+    RecordingInterceptor,
+    ScriptedInterceptor,
     ScriptedResolver,
     _lookup,
 )
@@ -40,51 +40,59 @@ def load_vectors(directory: str | pathlib.Path, *, max_level: int = 3) -> list[d
 
 
 def _validate_context(ctx: dict[str, Any], failures: list[str]) -> None:
-    """Schema-validate one recorded context against the per-hook-point schema.
+    """Schema-validate one recorded context against the per-interception-point schema.
 
     Falls back to the ``jsonschema`` package when installed; otherwise performs
     a structural L0 check so the CTK has zero hard dependencies.
     """
-    hp = ctx.get("hook_point")
+    hp = ctx.get("interception_point")
     try:
         import jsonschema  # type: ignore[import-not-found]
 
-        from agent_hooks.ctk._schemas import per_hook_registry, per_hook_schema
+        from agent_hooks.ctk._schemas import per_point_registry, per_point_schema
 
-        jsonschema.validate(ctx, per_hook_schema(hp), registry=per_hook_registry())
+        jsonschema.validate(ctx, per_point_schema(hp), registry=per_point_registry())
     except ModuleNotFoundError:
-        for k in ("spec", "hook_point", "timestamp", "sequence", "agent", "session", "target"):
+        l0 = ("spec", "interception_point", "timestamp", "sequence", "agent",
+              "session", "target")
+        for k in l0:
             if k not in ctx:
                 failures.append(f"{hp}: missing L0 field {k!r}")
     except Exception as e:  # noqa: BLE001
         failures.append(f"{hp}: schema validation failed: {e}")
 
 
-def _assert_hooks(
+_IP = "interception_point"
+
+
+def _assert_interceptions(
     expect: dict[str, Any], recorded: list[dict[str, Any]], failures: list[str]
 ) -> None:
-    expected = expect["hooks"]
+    expected = expect["interceptions"]
     strict = expect.get("sequence_strict", True)
-    rec_points = [c["hook_point"] for c in recorded]
+    rec_ips = [c[_IP] for c in recorded]
 
     if strict:
-        if rec_points != [e["hook_point"] for e in expected]:
+        if rec_ips != [e[_IP] for e in expected]:
             failures.append(
-                f"hook sequence mismatch:\n  expected {[e['hook_point'] for e in expected]}\n"
-                f"  got      {rec_points}"
+                f"interception sequence mismatch:\n"
+                f"  expected {[e[_IP] for e in expected]}\n"
+                f"  got      {rec_ips}"
             )
             return
         pairs = list(zip(expected, recorded, strict=True))
     else:
-        # Subsequence match: each expected hook matches the next recorded hook
-        # of the same hook_point.
+        # Subsequence match: each expected interception point matches the
+        # next recorded one of the same interception_point.
         pairs = []
         ri = 0
         for e in expected:
-            while ri < len(recorded) and recorded[ri]["hook_point"] != e["hook_point"]:
+            while ri < len(recorded) and recorded[ri][_IP] != e[_IP]:
                 ri += 1
             if ri >= len(recorded):
-                failures.append(f"expected hook {e['hook_point']!r} not found in sequence")
+                failures.append(
+                    f"expected interception point {e[_IP]!r} not found in sequence"
+                )
                 return
             pairs.append((e, recorded[ri]))
             ri += 1
@@ -96,13 +104,13 @@ def _assert_hooks(
             try:
                 got = _lookup(r, path)
             except (KeyError, IndexError, TypeError):
-                failures.append(f"{e['hook_point']}: path {path!r} did not resolve")
+                failures.append(f"{e['interception_point']}: path {path!r} did not resolve")
                 continue
             if got != want:
-                failures.append(f"{e['hook_point']}: {path} == {got!r}, want {want!r}")
+                failures.append(f"{e['interception_point']}: {path} == {got!r}, want {want!r}")
 
-    for absent in expect.get("hooks_absent", []):
-        if absent in rec_points:
+    for absent in expect.get("interceptions_absent", []):
+        if absent in rec_ips:
             failures.append(f"hook {absent!r} was emitted but MUST be absent")
 
 
@@ -128,12 +136,12 @@ async def run_vector(harness: Harness, vector: dict[str, Any]) -> VectorResult:
         return VectorResult(vid, title, level, "skip", detail=f"missing capabilities: {missing}")
 
     scenario = Scenario.from_wire(vector["scenario"])
-    consumer = RecordingConsumer(ScriptedConsumer(vector["consumer_script"]))
+    interceptor = RecordingInterceptor(ScriptedInterceptor(vector["interceptor_script"]))
     approval = vector.get("approval_script")
     resolver = ScriptedResolver(approval) if approval else None
     mode = EnforcementMode(vector.get("mode", "enforce"))
 
-    harness.setup(scenario, consumer, resolver, mode)
+    harness.setup(scenario, interceptor, resolver, mode)
     try:
         rr = await harness.run()
     except Exception as e:  # noqa: BLE001
@@ -142,10 +150,10 @@ async def run_vector(harness: Harness, vector: dict[str, Any]) -> VectorResult:
         harness.teardown()
 
     failures: list[str] = []
-    _assert_hooks(vector["expect"], consumer.recorded, failures)
+    _assert_interceptions(vector["expect"], interceptor.recorded, failures)
     _assert_record(vector["expect"], rr, failures)
 
-    seq = [c["sequence"] for c in consumer.recorded]
+    seq = [c["sequence"] for c in interceptor.recorded]
     if seq != sorted(seq) or len(set(seq)) != len(seq):
         failures.append(f"sequence not strictly increasing: {seq}")
 

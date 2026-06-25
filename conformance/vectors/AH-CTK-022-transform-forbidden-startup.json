@@ -1,6 +1,6 @@
 {
   "id": "AH-CTK-022",
-  "title": "transform at agent_startup is rejected with hook_error:transform_target_forbidden",
+  "title": "transform at agent_startup is rejected with host_error:transform_target_forbidden",
   "spec_clause": "4.3, 11",
   "level": 2,
   "capabilities": [],
@@ -8,15 +8,15 @@
     "input": { "content": "hi", "role": "user" },
     "model_script": [ { "respond": { "content": "hi", "tool_calls": [], "finish_reason": "stop" } } ]
   },
-  "consumer_script": [
+  "interceptor_script": [
     { "at": "agent_startup",
       "return": { "decision": "transform", "transform": { "path": "$target.tools_registered", "value": [] } } }
   ],
   "expect": {
     "sequence_strict": false,
-    "hooks": [
-      { "hook_point": "agent_startup" },
-      { "hook_point": "agent_shutdown", "context": { "summary.reason": "error" } }
+    "interceptions": [
+      { "interception_point": "agent_startup" },
+      { "interception_point": "agent_shutdown", "context": { "summary.reason": "error" } }
     ],
     "run_outcome": "blocked"
   }

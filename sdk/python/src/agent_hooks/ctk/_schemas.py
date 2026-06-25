@@ -16,13 +16,13 @@ def _load(name: str) -> dict[str, Any]:
     return json.loads((_SCHEMA_DIR / name).read_text())
 
 
-def per_hook_schema(hook_point: str) -> dict[str, Any]:
-    return _load(f"hook-context/{hook_point}.schema.json")
+def per_point_schema(interception_point: str) -> dict[str, Any]:
+    return _load(f"agent-context/{interception_point}.schema.json")
 
 
 @functools.lru_cache(maxsize=1)
-def per_hook_registry() -> Any:
-    """Build a ``referencing.Registry`` so per-hook ``$ref: hook-point.schema.json``
+def per_point_registry() -> Any:
+    """Build a ``referencing.Registry`` so per-hook ``$ref: interception-point.schema.json``
     resolves against the vendored copy."""
     from referencing import Registry, Resource  # type: ignore[import-not-found]
 

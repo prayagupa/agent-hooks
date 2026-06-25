@@ -1,27 +1,27 @@
 {
-  "$id": "https://agent-hooks.responsibleai.dev/v0.1/hook-context/pre_model_call.schema.json",
+  "$id": "https://agent-hooks.responsibleai.dev/v0.1/agent-context/post_tool_call.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Agent Hooks \u2014 hook context (pre_model_call)",
-  "description": "Closed L0+L1 schema for hook_point=pre_model_call (AGENT-HOOKS-0.1 \u00a74.2). Used by the CTK for strict validation.",
+  "title": "Agent Hooks \u2014 agent context (post_tool_call)",
+  "description": "Closed L0+L1 schema for interception_point=post_tool_call (AGENT-HOOKS-0.1 \u00a74.2). Used by the CTK for strict validation.",
   "type": "object",
   "required": [
     "spec",
-    "hook_point",
+    "interception_point",
     "timestamp",
     "sequence",
     "agent",
     "session",
     "target",
-    "model",
-    "messages"
+    "tool_call",
+    "tool_result"
   ],
   "properties": {
     "spec": {
       "type": "string",
       "pattern": "^agent-hooks/\\d+\\.\\d+$"
     },
-    "hook_point": {
-      "const": "pre_model_call"
+    "interception_point": {
+      "const": "post_tool_call"
     },
     "timestamp": {
       "type": "string",
@@ -225,8 +225,7 @@
         "params": {
           "type": "object"
         }
-      },
-      "additionalProperties": false
+      }
     },
     "messages": {
       "type": "array",
@@ -315,7 +314,8 @@
           "type": "string",
           "pattern": "^sha256:[0-9a-f]{64}$"
         }
-      }
+      },
+      "additionalProperties": false
     },
     "tool_result": {
       "type": "object",
@@ -332,7 +332,8 @@
           "type": "number",
           "minimum": 0
         }
-      }
+      },
+      "additionalProperties": false
     },
     "tool_decl": {
       "type": "object",

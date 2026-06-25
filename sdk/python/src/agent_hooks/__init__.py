@@ -5,12 +5,12 @@
 Implements AGENT-HOOKS-0.1. See ``spec/AGENT-HOOKS-0.1.md`` for the normative
 text. This package provides:
 
-- :class:`HookPoint`, :class:`Decision`, :class:`EnforcementMode` — enums (§3, §5, §8)
-- :class:`Verdict`, :class:`Transform`, :class:`Evidence` — consumer return (§5)
-- :class:`HookContext` and per-hook builders — host payload (§4)
-- :class:`HookConsumer`, :class:`ApprovalResolver` — protocols (§7, §9)
-- :class:`HookEmitter` — host-side helper that builds context, dispatches to
-  consumers, applies the verdict, and returns a :class:`HookResult` (§6)
+- :class:`InterceptionPoint`, :class:`Decision`, :class:`EnforcementMode` — enums (§3, §5, §8)
+- :class:`Verdict`, :class:`Transform`, :class:`Evidence` — interceptor return (§5)
+- :class:`AgentContext` and per-hook builders — host payload (§4)
+- :class:`Interceptor`, :class:`ApprovalResolver` — protocols (§7, §9)
+- :class:`InterceptionEmitter` — host-side helper that builds context, dispatches to
+  interceptors, applies the verdict, and returns a :class:`InterceptionRecord` (§6)
 - :func:`canonical_json`, :func:`context_identity` — §10
 - :mod:`agent_hooks.ctk` — Conformance Test Kit (§13)
 """
@@ -22,9 +22,9 @@ from agent_hooks._types import (
     Decision,
     EnforcementMode,
     Evidence,
-    HookError,
-    HookPoint,
-    HookResult,
+    HostError,
+    InterceptionPoint,
+    InterceptionRecord,
     Transform,
     Verdict,
 )
@@ -35,14 +35,16 @@ from agent_hooks.approval import (
     ApprovalResolver,
 )
 from agent_hooks.canonical import canonical_json, context_identity
-from agent_hooks.consumer import HookConsumer
-from agent_hooks.context import HookContext, HookContextBuilder
-from agent_hooks.emitter import HookEmitter
-from agent_hooks.exceptions import HookBlocked, HookSuspended
+from agent_hooks.context import AgentContext, AgentContextBuilder
+from agent_hooks.emitter import InterceptionEmitter
+from agent_hooks.exceptions import InterceptionBlocked, InterceptionSuspended
+from agent_hooks.interceptor import Interceptor
 
 __all__ = [
     "ALLOW",
     "SPEC_VERSION",
+    "AgentContext",
+    "AgentContextBuilder",
     "ApprovalOutcome",
     "ApprovalRequest",
     "ApprovalResolution",
@@ -50,15 +52,13 @@ __all__ = [
     "Decision",
     "EnforcementMode",
     "Evidence",
-    "HookBlocked",
-    "HookConsumer",
-    "HookContext",
-    "HookContextBuilder",
-    "HookEmitter",
-    "HookError",
-    "HookPoint",
-    "HookResult",
-    "HookSuspended",
+    "HostError",
+    "InterceptionBlocked",
+    "InterceptionEmitter",
+    "InterceptionPoint",
+    "InterceptionRecord",
+    "InterceptionSuspended",
+    "Interceptor",
     "Transform",
     "Verdict",
     "canonical_json",

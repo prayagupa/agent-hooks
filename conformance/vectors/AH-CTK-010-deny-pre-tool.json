@@ -15,23 +15,23 @@
       { "respond": { "content": "I was not able to delete files.", "tool_calls": [], "finish_reason": "stop" } }
     ]
   },
-  "consumer_script": [
+  "interceptor_script": [
     { "at": "pre_tool_call",
       "match": { "tool_call.name": "delete_files" },
       "return": { "decision": "deny", "reason": "ctk:dangerous_tool" } }
   ],
   "expect": {
     "sequence_strict": false,
-    "hooks": [
-      { "hook_point": "agent_startup" },
-      { "hook_point": "input" },
-      { "hook_point": "pre_model_call" },
-      { "hook_point": "post_model_call" },
-      { "hook_point": "pre_tool_call", "context": { "tool_call.name": "delete_files", "tool_call.args.path": "/" } },
-      { "hook_point": "output" },
-      { "hook_point": "agent_shutdown" }
+    "interceptions": [
+      { "interception_point": "agent_startup" },
+      { "interception_point": "input" },
+      { "interception_point": "pre_model_call" },
+      { "interception_point": "post_model_call" },
+      { "interception_point": "pre_tool_call", "context": { "tool_call.name": "delete_files", "tool_call.args.path": "/" } },
+      { "interception_point": "output" },
+      { "interception_point": "agent_shutdown" }
     ],
-    "hooks_absent": ["post_tool_call"],
+    "interceptions_absent": ["post_tool_call"],
     "tool_not_invoked": ["delete_files"],
     "run_outcome": "completed"
   }

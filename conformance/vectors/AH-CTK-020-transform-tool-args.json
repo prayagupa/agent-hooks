@@ -18,7 +18,7 @@
       { "respond": { "content": "done", "tool_calls": [], "finish_reason": "stop" } }
     ]
   },
-  "consumer_script": [
+  "interceptor_script": [
     { "at": "pre_tool_call",
       "match": { "tool_call.name": "http_get" },
       "return": { "decision": "transform", "reason": "ctk:egress_redirect",
@@ -26,9 +26,9 @@
   ],
   "expect": {
     "sequence_strict": false,
-    "hooks": [
-      { "hook_point": "pre_tool_call", "context": { "tool_call.args.url": "https://evil.example", "target.url": "https://evil.example" } },
-      { "hook_point": "post_tool_call", "context": { "tool_call.args.url": "https://safe.example", "tool_result.value.status": 200, "tool_result.is_error": false } }
+    "interceptions": [
+      { "interception_point": "pre_tool_call", "context": { "tool_call.args.url": "https://evil.example", "target.url": "https://evil.example" } },
+      { "interception_point": "post_tool_call", "context": { "tool_call.args.url": "https://safe.example", "tool_result.value.status": 200, "tool_result.is_error": false } }
     ],
     "tool_invocations": [ { "name": "http_get", "args": { "url": "https://safe.example" } } ],
     "run_outcome": "completed",

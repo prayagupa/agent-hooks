@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
-"""CTK-supplied consumer/resolver that replay a vector's scripts."""
+"""CTK-supplied interceptor/resolver that replay a vector's scripts."""
 from __future__ import annotations
 
 import copy
@@ -9,7 +9,7 @@ from typing import Any
 
 from agent_hooks._types import Verdict
 from agent_hooks.approval import ApprovalOutcome, ApprovalRequest, ApprovalResolution
-from agent_hooks.context import HookContext
+from agent_hooks.context import AgentContext
 
 
 def _lookup(ctx: Any, dotted: str) -> Any:
@@ -36,7 +36,7 @@ def _lookup(ctx: Any, dotted: str) -> Any:
     return cur
 
 
-def _matches(ctx: HookContext, predicates: dict[str, Any] | None) -> bool:
+def _matches(ctx: AgentContext, predicates: dict[str, Any] | None) -> bool:
     if not predicates:
         return True
     for path, expected in predicates.items():
@@ -49,13 +49,13 @@ def _matches(ctx: HookContext, predicates: dict[str, Any] | None) -> bool:
 
 
 @dataclass(slots=True)
-class ScriptedConsumer:
-    """Replays a vector's ``consumer_script``: first matching rule wins, else ``allow``."""
+class ScriptedInterceptor:
+    """Replays a vector's ``interceptor_script``: first matching rule wins, else ``allow``."""
 
     rules: list[dict[str, Any]]
 
-    def on_hook(self, context: HookContext) -> dict[str, Any]:
-        hp = context["hook_point"]
+    def intercept(self, context: AgentContext) -> dict[str, Any]:
+        hp = context["interception_point"]
         for rule in self.rules:
             if rule["at"] != hp:
                 continue
@@ -65,17 +65,17 @@ class ScriptedConsumer:
 
 
 @dataclass(slots=True)
-class RecordingConsumer:
-    """Wraps another consumer and records every context passed through."""
+class RecordingInterceptor:
+    """Wraps another interceptor and records every context passed through."""
 
-    inner: ScriptedConsumer
-    recorded: list[HookContext] = field(default_factory=list)
+    inner: ScriptedInterceptor
+    recorded: list[AgentContext] = field(default_factory=list)
 
-    def on_hook(self, context: HookContext) -> dict[str, Any]:
+    def intercept(self, context: AgentContext) -> dict[str, Any]:
         # Deep-copy so later mutation (transform write-back) doesn't alter the
-        # record of what the consumer *saw*.
+        # record of what the interceptor *saw*.
         self.recorded.append(copy.deepcopy(context))
-        return self.inner.on_hook(context)
+        return self.inner.intercept(context)
 
 
 @dataclass(slots=True)

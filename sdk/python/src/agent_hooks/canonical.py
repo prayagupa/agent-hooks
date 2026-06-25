@@ -8,26 +8,26 @@ import json
 import math
 from typing import Any
 
-from agent_hooks._types import HookPoint
+from agent_hooks._types import InterceptionPoint
 
 #: L0 keys (§4.1) — always retained for identity.
 _L0: frozenset[str] = frozenset(
-    {"spec", "hook_point", "timestamp", "sequence", "agent", "session", "target"}
+    {"spec", "interception_point", "timestamp", "sequence", "agent", "session", "target"}
 )
 #: L0 sub-keys retained on ``agent`` and ``session``.
 _L0_AGENT: frozenset[str] = frozenset({"id", "framework"})
 _L0_SESSION: frozenset[str] = frozenset({"id"})
 
-#: L1 keys per hook point (§4.2).
+#: L1 keys per interception point (§4.2).
 _L1: dict[str, frozenset[str]] = {
-    HookPoint.AGENT_STARTUP.value: frozenset({"agent_init"}),
-    HookPoint.INPUT.value: frozenset({"input"}),
-    HookPoint.PRE_MODEL_CALL.value: frozenset({"model", "messages"}),
-    HookPoint.POST_MODEL_CALL.value: frozenset({"model", "response"}),
-    HookPoint.PRE_TOOL_CALL.value: frozenset({"tool_call"}),
-    HookPoint.POST_TOOL_CALL.value: frozenset({"tool_call", "tool_result"}),
-    HookPoint.OUTPUT.value: frozenset({"output"}),
-    HookPoint.AGENT_SHUTDOWN.value: frozenset({"summary"}),
+    InterceptionPoint.AGENT_STARTUP.value: frozenset({"agent_init"}),
+    InterceptionPoint.INPUT.value: frozenset({"input"}),
+    InterceptionPoint.PRE_MODEL_CALL.value: frozenset({"model", "messages"}),
+    InterceptionPoint.POST_MODEL_CALL.value: frozenset({"model", "response"}),
+    InterceptionPoint.PRE_TOOL_CALL.value: frozenset({"tool_call"}),
+    InterceptionPoint.POST_TOOL_CALL.value: frozenset({"tool_call", "tool_result"}),
+    InterceptionPoint.OUTPUT.value: frozenset({"output"}),
+    InterceptionPoint.AGENT_SHUTDOWN.value: frozenset({"summary"}),
 }
 
 
@@ -94,7 +94,7 @@ def canonical_json(obj: Any) -> str:
 
 def _strip_to_l01(ctx: dict[str, Any]) -> dict[str, Any]:
     """Return a deep copy of ``ctx`` containing only L0 + L1 fields (§10.2)."""
-    hp = ctx["hook_point"]
+    hp = ctx["interception_point"]
     keep = _L0 | _L1.get(hp, frozenset())
     out: dict[str, Any] = {}
     for k in ctx:

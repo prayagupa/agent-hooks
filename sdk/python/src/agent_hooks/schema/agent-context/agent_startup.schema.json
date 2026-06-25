@@ -1,26 +1,26 @@
 {
-  "$id": "https://agent-hooks.responsibleai.dev/v0.1/hook-context/input.schema.json",
+  "$id": "https://agent-hooks.responsibleai.dev/v0.1/agent-context/agent_startup.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Agent Hooks \u2014 hook context (input)",
-  "description": "Closed L0+L1 schema for hook_point=input (AGENT-HOOKS-0.1 \u00a74.2). Used by the CTK for strict validation.",
+  "title": "Agent Hooks \u2014 agent context (agent_startup)",
+  "description": "Closed L0+L1 schema for interception_point=agent_startup (AGENT-HOOKS-0.1 \u00a74.2). Used by the CTK for strict validation.",
   "type": "object",
   "required": [
     "spec",
-    "hook_point",
+    "interception_point",
     "timestamp",
     "sequence",
     "agent",
     "session",
     "target",
-    "input"
+    "agent_init"
   ],
   "properties": {
     "spec": {
       "type": "string",
       "pattern": "^agent-hooks/\\d+\\.\\d+$"
     },
-    "hook_point": {
-      "const": "input"
+    "interception_point": {
+      "const": "agent_startup"
     },
     "timestamp": {
       "type": "string",
@@ -189,7 +189,8 @@
             "type": "string"
           }
         }
-      }
+      },
+      "additionalProperties": false
     },
     "input": {
       "type": "object",
@@ -207,8 +208,7 @@
             "external"
           ]
         }
-      },
-      "additionalProperties": false
+      }
     },
     "model": {
       "type": "object",

@@ -163,25 +163,28 @@ box(s, 0, 0, W, H, fill=NAVY, shape=MSO_SHAPE.RECTANGLE)
 box(s, 0, H - 0.18, W, 0.18, fill=CYAN, shape=MSO_SHAPE.RECTANGLE)
 tf = textbox(s, 1.0, 2.2, W - 2.0, 3.0)
 txt(tf, "AGENT-HOOKS", size=13, bold=True, color=CYAN)
-txt(tf, "A framework-neutral hook contract for AI agents",
+txt(tf, "A framework-neutral control contract for AI agents",
     size=34, bold=True, color=RGBColor(0xFF, 0xFF, 0xFF), first=False, space_after=10)
 txt(tf, "Design review · spec v0.1.0-alpha · responsibleai/agent-hooks",
     size=13, color=RGBColor(0xC8, 0xC8, 0xC8), first=False)
 notes(s, "Extracted from ACS policy-engine v0.3.1-beta. Goal: every agent "
          "framework exposes the same eight interception points; every "
-         "consumer (policy, observability, audit, cost) targets one contract.")
+         "control component (policy engine, content filter, rate limiter, "
+         "approval gateway, egress guard) targets one contract. Control "
+         "plane only; tracing and passive observability are out of scope.")
 
 
 # ---------------------------------------------------------------------------
-# 2. The problem: N frameworks x M consumers
+# 2. The problem: N frameworks x M interceptors
 s = prs.slides.add_slide(BLANK)
-header(s, "PROBLEM", "Every framework x every consumer = bespoke adapter",
+header(s, "PROBLEM", "Every framework x every control = bespoke adapter",
        "Surveyed 7 framework integrations in AGT: no shared base, divergent "
-       "payloads, uneven hook coverage")
+       "payloads, uneven interception-point coverage")
 
 fws = ["OpenAI Agents", "LangChain", "Semantic Kernel", "CrewAI",
        "PydanticAI", "AutoGen", "LangGraph"]
-cons = ["ACS policy", "OTel tracing", "Audit log", "Cost tracker", "Content filter"]
+cons = ["ACS policy", "Content filter", "Rate limiter", "Approval gateway",
+        "Egress guard"]
 
 fy, cy = 2.2, 5.2
 fw_w, gap = 1.55, 0.13
@@ -196,7 +199,7 @@ for j, c in enumerate(cons):
     label(s, cx0 + j * (c_w + gap), cy, c_w, 0.75, c,
           fill=CARD, line=MAGENTA, size=10, bold=True)
 
-# tangle: every framework to every consumer
+# tangle: every framework to every interceptor
 for i in range(len(fws)):
     for j in range(len(cons)):
         connector(s, fx0 + i * (fw_w + gap) + fw_w / 2, fy + 0.75,
@@ -216,8 +219,8 @@ notes(s, "agentmesh-integrations survey: payload representation ranges from "
 # ---------------------------------------------------------------------------
 # 3. The cut: agent-hooks as the contract layer
 s = prs.slides.add_slide(BLANK)
-header(s, "ARCHITECTURE", "agent-hooks is the wire contract; ACS becomes one consumer",
-       "Frameworks emit HookContext; consumers return Verdict; host enforces")
+header(s, "ARCHITECTURE", "agent-hooks is the wire contract; ACS becomes one interceptor",
+       "Frameworks emit AgentContext; interceptors return Verdict; host enforces")
 
 # top: frameworks
 for i, f in enumerate(fws):
@@ -233,15 +236,15 @@ tf = ah.text_frame
 tf.word_wrap = True
 txt(tf, "agent-hooks", size=16, bold=True, color=CYAN,
     align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
-txt(tf, "HookPoint  ·  HookContext  ·  Verdict  ·  host obligations  ·  "
+txt(tf, "InterceptionPoint  ·  AgentContext  ·  Verdict  ·  host obligations  ·  "
         "approval seam  ·  context_identity  ·  CTK",
     size=10, color=RGBColor(0xC8, 0xD4, 0xE0), align=PP_ALIGN.CENTER, first=False)
 
 # down arrows
-label(s, 1.5, 4.25, 2.0, 0.3, "HookContext ↓", size=9, color=SLATE, line=None)
+label(s, 1.5, 4.25, 2.0, 0.3, "AgentContext ↓", size=9, color=SLATE, line=None)
 label(s, W - 3.5, 4.25, 2.0, 0.3, "↑ Verdict", size=9, color=SLATE, line=None)
 
-# bottom: consumers
+# bottom: interceptors
 for j, c in enumerate(cons):
     label(s, cx0 + j * (c_w + gap), 5.0, c_w, 0.65, c,
           fill=CARD, line=MAGENTA, size=10, bold=True)
@@ -260,16 +263,16 @@ notes(s, "ACS keeps PolicyInput, manifest, Cedar/OPA dispatchers, "
 
 
 # ---------------------------------------------------------------------------
-# 4. Hook points on the agent-loop timeline
+# 4. Interception points on the agent-loop timeline
 s = prs.slides.add_slide(BLANK)
-header(s, "SPEC §3", "Eight hook points on the agent loop",
+header(s, "SPEC §3", "Eight interception points on the agent loop",
        "Closed set; pre/post pairs bracket each side-effect; sequence is "
        "strictly increasing")
 
 ty = 3.7
 box(s, 0.9, ty - 0.01, W - 1.8, 0.02, fill=SLATE, shape=MSO_SHAPE.RECTANGLE)
 
-hooks = [
+points = [
     ("agent_startup", BLUE, False),
     ("input", CYAN, True),
     ("pre_model_call", MAGENTA, True),
@@ -279,9 +282,9 @@ hooks = [
     ("output", CYAN, True),
     ("agent_shutdown", BLUE, False),
 ]
-xs = [0.9 + i * (W - 1.8) / (len(hooks) - 1) for i in range(len(hooks))]
+xs = [0.9 + i * (W - 1.8) / (len(points) - 1) for i in range(len(points))]
 
-for i, ((name, col, tform), x) in enumerate(zip(hooks, xs)):
+for i, ((name, col, tform), x) in enumerate(zip(points, xs)):
     box(s, x - 0.06, ty - 0.06, 0.12, 0.12, fill=col,
         shape=MSO_SHAPE.OVAL, line=None)
     above = i % 2 == 0
@@ -312,9 +315,9 @@ notes(s, "transform is forbidden at startup/shutdown (no actionable target). "
 
 
 # ---------------------------------------------------------------------------
-# 5. HookContext tiers
+# 5. AgentContext tiers
 s = prs.slides.add_slide(BLANK)
-header(s, "SPEC §4", "HookContext: tiered schema with an explicit $target",
+header(s, "SPEC §4", "AgentContext: tiered schema with an explicit $target",
        "L0+L1 are sufficient to decide and to compute identity; L2/L3 are "
        "additive")
 
@@ -325,9 +328,9 @@ levels = [
      RGBColor(0xEE, 0xEE, 0xF1), 0.0),
     ("L2", "well-known optional", "trace, tenant, budgets, usage, model.params",
      RGBColor(0xE3, 0xEC, 0xF6), 0.35),
-    ("L1", "per-hook required", "tool_call.{id,name,args}, response, messages, ...",
+    ("L1", "per-point required", "tool_call.{id,name,args}, response, messages, ...",
      RGBColor(0xD4, 0xE6, 0xF6), 0.7),
-    ("L0", "always required", "spec, hook_point, timestamp, sequence, "
+    ("L0", "always required", "spec, interception_point, timestamp, sequence, "
      "agent.{id,framework}, session.id, target",
      RGBColor(0xC0, 0xDB, 0xF2), 1.05),
 ]
@@ -399,9 +402,9 @@ label(s, dx0 + 3 * (dw + 0.18), 5.35, 2 * dw + 0.18, 0.5,
       "BLOCK  →  action MUST NOT execute", size=11, bold=True, color=RED)
 
 label(s, 0.9, 6.3, W - 1.8, 0.5,
-      "§6.2: when a pre_X hook blocks, post_X is NOT emitted. "
-      "§6.3: any failure (consumer raised, timeout, invalid verdict) "
-      "fails closed to deny with a hook_error:* reason.",
+      "§6.2: when a pre_X interception blocks, post_X is NOT emitted. "
+      "§6.3: any failure (interceptor raised, timeout, invalid verdict) "
+      "fails closed to deny with a host_error:* reason.",
       size=10, color=SLATE)
 
 footer(s, 6, TOTAL)
@@ -417,7 +420,7 @@ header(s, "SPEC §9", "The escalate approval seam",
        "Approval is bound to context_identity so the approver consents to "
        "exactly the action that will execute")
 
-actors = [("Host", BLUE), ("Consumer", MAGENTA), ("Resolver", AMBER),
+actors = [("Host", BLUE), ("Interceptor", MAGENTA), ("Resolver", AMBER),
           ("Action", GREEN)]
 ax = {}
 top, life_bot = 2.2, 6.7
@@ -438,8 +441,8 @@ def msg(y, frm, to, text, *, col=SLATE, ret=False):
           font=MONO)
 
 y = 3.1
-msg(y, "Host", "Consumer", "on_hook(ctx)  id=sha256(L0+L1)", col=BLUE); y += 0.45
-msg(y, "Consumer", "Host", "Verdict{escalate}", col=MAGENTA, ret=True); y += 0.45
+msg(y, "Host", "Interceptor", "intercept(ctx)  id=sha256(L0+L1)", col=BLUE); y += 0.45
+msg(y, "Interceptor", "Host", "Verdict{escalate}", col=MAGENTA, ret=True); y += 0.45
 msg(y, "Host", "Resolver", "ApprovalRequest{id, ctx, verdict}", col=AMBER); y += 0.45
 msg(y, "Resolver", "Host", "ApprovalResolution{outcome, id', verdict'}",
     col=AMBER, ret=True); y += 0.45
@@ -451,13 +454,13 @@ label(s, ax["Host"] - 0.95, dy, 1.9, 0.5, "id' == id ?",
 y += 0.7
 msg(y, "Host", "Action", "approve→permit  →  execute(target)", col=GREEN); y += 0.4
 label(s, ax["Host"] + 0.3, y - 0.12, 4.5, 0.3,
-      "reject / unresolved / id mismatch  →  deny (hook_error:approval_*)",
+      "reject / unresolved / id mismatch  →  deny (host_error:approval_*)",
       size=8, color=RED, font=MONO, align=PP_ALIGN.LEFT)
 
 footer(s, 7, TOTAL)
 notes(s, "Open design question RM-09: should ApprovalResolution.verdict be "
          "restricted to allow|warn so a resolver cannot inject a transform "
-         "that bypasses the consumer chain?")
+         "that bypasses the interceptor chain?")
 
 
 # ---------------------------------------------------------------------------
@@ -471,10 +474,10 @@ header(s, "SPEC §10", "context_identity: stable across SDKs, scoped to L0+L1",
 hx, hw = 1.0, 5.4
 label(s, hx, 2.1, hw, 0.4, "canonical_json( strip_to_L0+L1(ctx) )",
       fill=CODE_BG, color=CODE_FG, size=11, font=MONO)
-inc = [("spec, hook_point, timestamp, sequence", True),
+inc = [("spec, interception_point, timestamp, sequence", True),
        ("agent.{id, framework}", True),
        ("session.{id}", True),
-       ("target  +  L1 fields for this hook_point", True),
+       ("target  +  L1 fields for this interception_point", True),
        ("agent.{name, version}, session.started_at", False),
        ("trace, tenant, budgets, usage", False),
        ("extensions.*", False)]
@@ -527,7 +530,7 @@ levels_p = [
      "parallel/streaming, stable identity", CYAN),
     ("Level 2  Enforcing", "honours deny / transform / escalate / "
      "evaluate_only", BLUE),
-    ("Level 1  Observing", "all hooks fire in order with valid L0+L1 "
+    ("Level 1  Instrumented", "all interception points fire in order with valid L0+L1 "
      "context", SLATE),
 ]
 for i, (t, d, col) in enumerate(levels_p):
@@ -544,8 +547,8 @@ for i, (t, d, col) in enumerate(levels_p):
 # right: CTK pipeline
 rx = px + pw + 0.7
 steps = [
-    ("vectors/*.json", "scenario + consumer_script + expect", CARD, MAGENTA),
-    ("CTK runner", "ScriptedConsumer + RecordingConsumer", CARD, BLUE),
+    ("vectors/*.json", "scenario + interceptor_script + expect", CARD, MAGENTA),
+    ("CTK runner", "ScriptedInterceptor + RecordingInterceptor", CARD, BLUE),
     ("Harness", "framework shim: setup() / run() / teardown()",
      RGBColor(0xFF, 0xF6, 0xE5), AMBER),
     ("framework under test", "real adapter, mock model + tools", CARD, GREEN),
@@ -667,7 +670,7 @@ tf = textbox(s, ox + aw + 0.5, 2.4, W - ox - aw - 1.2, 4.0)
 txt(tf, "Top of NOW", size=12, bold=True, color=NAVY)
 for fid, t in [
     ("RM-01", "Fail-closed has zero CTK coverage"),
-    ("RM-08", "hook_error:* verdicts violate own schema"),
+    ("RM-08", "host_error:* verdicts violate own schema"),
     ("RM-16", "emit() result is ignorable; deny bypassable"),
     ("RM-04", "Mutable ctx → covert transform"),
     ("RM-02/03", "Canonical JSON diverges; no golden vectors"),
@@ -693,12 +696,12 @@ qs = [
     ("Canonical JSON", "Replace §10.1 with RFC 8785 (JCS) reference, or "
      "document deltas as a JCS profile?", "RM-02"),
     ("Approval transform", "May ApprovalResolution return transform, or "
-     "restrict to allow|warn so resolvers cannot bypass consumers?", "RM-09"),
-    ("Zero consumers", "Implicit allow, or deny with "
-     "hook_error:no_consumer?", "RM-12"),
-    ("Multi-consumer combine", "Keep first-block short-circuit, or invoke "
+     "restrict to allow|warn so resolvers cannot bypass interceptors?", "RM-09"),
+    ("Zero interceptors", "Implicit allow, or deny with "
+     "host_error:no_consumer?", "RM-12"),
+    ("Multi-interceptor combine", "Keep first-block short-circuit, or invoke "
      "all and apply deny>escalate>transform>warn>allow lattice?", "RM-11"),
-    ("Consumer trust roles", "All consumers one trust class, or define "
+    ("Interceptor trust roles", "All interceptors one trust class, or define "
      "observing vs controlling at registration?", "RM-29"),
     ("Streaming egress", "In scope for 0.1 (buffer-until-permit), or "
      "explicit non-goal deferred to 0.2?", "RM-10"),
@@ -732,13 +735,13 @@ lanes = [
       "RM-02/03 RFC 8785 + golden vectors",
       "RM-04/16 immutable ctx + must-use result",
       "RM-05 threat model + non-goals",
-      "RM-08 schema fix for hook_error:*",
+      "RM-08 schema fix for host_error:*",
       "RM-09/11/12 §7 + §9 spec tightening",
       "RM-19/20/25 CI pinning + CODEOWNERS"]),
     ("NEXT", "before spec/v0.1.0 tag", BLUE, 26,
      ["RM-27 cross-SDK CTK parity gate",
-      "RM-29 consumer trust roles",
-      "RM-34 per-consumer verdict provenance",
+      "RM-29 interceptor trust roles",
+      "RM-34 per-interceptor verdict provenance",
       "RM-40 payload size/depth bounds",
       "RM-43 release workflow + SBOM + signing",
       "RM-45 Level-3 vectors",
@@ -779,7 +782,7 @@ asks = [
     ("Decide the six open questions", "Each is a one-paragraph spec edit "
      "once decided; blocking RM-02/09/10/11/12/29."),
     ("Confirm the layering cut", "Verdict and approval seam in agent-hooks "
-     "vs ACS; identity computed over HookContext not PolicyInput."),
+     "vs ACS; identity computed over AgentContext not PolicyInput."),
     ("Nominate per-language CTK owners", "Rust, TS, .NET, Go runners are "
      "scaffolded; need an owner each to reach parity (RM-27)."),
     ("Approve the conformance-claim format", "CLAIMS.md row shape and the "

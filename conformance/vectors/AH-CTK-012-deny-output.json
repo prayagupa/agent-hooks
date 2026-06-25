@@ -8,18 +8,18 @@
     "input": { "content": "tell me a secret", "role": "user" },
     "model_script": [ { "respond": { "content": "the secret is X", "tool_calls": [], "finish_reason": "stop" } } ]
   },
-  "consumer_script": [
+  "interceptor_script": [
     { "at": "output", "return": { "decision": "deny", "reason": "ctk:output_blocked" } }
   ],
   "expect": {
     "sequence_strict": true,
-    "hooks": [
-      { "hook_point": "agent_startup" },
-      { "hook_point": "input" },
-      { "hook_point": "pre_model_call" },
-      { "hook_point": "post_model_call" },
-      { "hook_point": "output", "context": { "output.content": "the secret is X" } },
-      { "hook_point": "agent_shutdown" }
+    "interceptions": [
+      { "interception_point": "agent_startup" },
+      { "interception_point": "input" },
+      { "interception_point": "pre_model_call" },
+      { "interception_point": "post_model_call" },
+      { "interception_point": "output", "context": { "output.content": "the secret is X" } },
+      { "interception_point": "agent_shutdown" }
     ],
     "final_output": null,
     "run_outcome": "blocked"

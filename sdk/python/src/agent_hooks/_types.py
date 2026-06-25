@@ -11,8 +11,8 @@ from typing import Any, Final
 SPEC_VERSION: Final[str] = "agent-hooks/0.1"
 
 
-class HookPoint(str, Enum):
-    """The closed set of agent lifecycle hook points (§3)."""
+class InterceptionPoint(str, Enum):
+    """The closed set of agent lifecycle interception points (§3)."""
 
     AGENT_STARTUP = "agent_startup"
     INPUT = "input"
@@ -26,15 +26,15 @@ class HookPoint(str, Enum):
     @property
     def transform_permitted(self) -> bool:
         """Whether a ``transform`` verdict is permitted at this point (§3, §4.3)."""
-        return self not in {HookPoint.AGENT_STARTUP, HookPoint.AGENT_SHUTDOWN}
+        return self not in {InterceptionPoint.AGENT_STARTUP, InterceptionPoint.AGENT_SHUTDOWN}
 
     @property
     def is_pre(self) -> bool:
-        return self in {HookPoint.PRE_MODEL_CALL, HookPoint.PRE_TOOL_CALL}
+        return self in {InterceptionPoint.PRE_MODEL_CALL, InterceptionPoint.PRE_TOOL_CALL}
 
     @property
     def is_post(self) -> bool:
-        return self in {HookPoint.POST_MODEL_CALL, HookPoint.POST_TOOL_CALL}
+        return self in {InterceptionPoint.POST_MODEL_CALL, InterceptionPoint.POST_TOOL_CALL}
 
 
 class Decision(str, Enum):
@@ -63,21 +63,21 @@ class EnforcementMode(str, Enum):
     EVALUATE_ONLY = "evaluate_only"
 
 
-class HookError(str, Enum):
-    """Reserved ``hook_error:*`` reasons a host synthesizes (§11)."""
+class HostError(str, Enum):
+    """Reserved ``host_error:*`` reasons a host synthesizes (§11)."""
 
-    CONTEXT_INVALID = "hook_error:context_invalid"
-    CONSUMER_FAILED = "hook_error:consumer_failed"
-    CONSUMER_TIMEOUT = "hook_error:consumer_timeout"
-    VERDICT_INVALID = "hook_error:verdict_invalid"
-    TRANSFORM_INVALID = "hook_error:transform_invalid"
-    TRANSFORM_TARGET_FORBIDDEN = "hook_error:transform_target_forbidden"
-    APPROVAL_RESOLVER_MISSING = "hook_error:approval_resolver_missing"
-    APPROVAL_RESOLVER_FAILED = "hook_error:approval_resolver_failed"
-    APPROVAL_UNRESOLVED = "hook_error:approval_unresolved"
-    APPROVAL_ACTION_MISMATCH = "hook_error:approval_action_mismatch"
-    ADAPTER_UNSUPPORTED = "hook_error:adapter_unsupported"
-    STREAMING_UNSUPPORTED = "hook_error:streaming_unsupported"
+    CONTEXT_INVALID = "host_error:context_invalid"
+    INTERCEPTOR_FAILED = "host_error:interceptor_failed"
+    INTERCEPTOR_TIMEOUT = "host_error:interceptor_timeout"
+    VERDICT_INVALID = "host_error:verdict_invalid"
+    TRANSFORM_INVALID = "host_error:transform_invalid"
+    TRANSFORM_TARGET_FORBIDDEN = "host_error:transform_target_forbidden"
+    APPROVAL_RESOLVER_MISSING = "host_error:approval_resolver_missing"
+    APPROVAL_RESOLVER_FAILED = "host_error:approval_resolver_failed"
+    APPROVAL_UNRESOLVED = "host_error:approval_unresolved"
+    APPROVAL_ACTION_MISMATCH = "host_error:approval_action_mismatch"
+    ADAPTER_UNSUPPORTED = "host_error:adapter_unsupported"
+    STREAMING_UNSUPPORTED = "host_error:streaming_unsupported"
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,11 +126,11 @@ class Evidence:
 
 @dataclass(frozen=True, slots=True)
 class Verdict:
-    """Consumer return value (§5).
+    """Interceptor return value (§5).
 
-    Hosts construct a Verdict from a consumer's wire output via
+    Hosts construct a Verdict from an interceptor's wire output via
     :meth:`from_wire`, which validates per §5 and raises :class:`ValueError`
-    on violation; the emitter maps that to ``hook_error:verdict_invalid``.
+    on violation; the emitter maps that to ``host_error:verdict_invalid``.
     """
 
     decision: Decision
@@ -141,8 +141,8 @@ class Verdict:
     result_labels: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        if self.reason is not None and self.reason.startswith("hook_error:"):
-            raise ValueError("verdict.reason MUST NOT start with 'hook_error:' (§5)")
+        if self.reason is not None and self.reason.startswith("host_error:"):
+            raise ValueError("verdict.reason MUST NOT start with 'host_error:' (§5)")
         if self.decision is Decision.TRANSFORM and self.transform is None:
             raise ValueError("transform body REQUIRED when decision=='transform' (§5)")
         if self.decision is not Decision.TRANSFORM and self.transform is not None:
@@ -200,11 +200,11 @@ class Verdict:
         )
 
     @classmethod
-    def hook_error(cls, err: HookError, message: str | None = None) -> Verdict:
+    def host_error(cls, err: HostError, message: str | None = None) -> Verdict:
         """Host-synthesized deny verdict for a §11 failure.
 
-        ``reason`` carries the reserved ``hook_error:*`` identifier. This
-        bypasses the consumer-side prefix check by constructing directly.
+        ``reason`` carries the reserved ``host_error:*`` identifier. This
+        bypasses the interceptor-side prefix check by constructing directly.
         """
         v = object.__new__(cls)
         object.__setattr__(v, "decision", Decision.DENY)
@@ -221,10 +221,10 @@ ALLOW: Final[Verdict] = Verdict(decision=Decision.ALLOW)
 
 
 @dataclass(frozen=True, slots=True)
-class HookResult:
+class InterceptionRecord:
     """Host-side record of one hook evaluation (§6, §10)."""
 
-    hook_point: HookPoint
+    interception_point: InterceptionPoint
     mode: EnforcementMode
     verdict: Verdict
     input_identity: str

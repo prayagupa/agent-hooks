@@ -65,7 +65,7 @@ type Harness interface {
 
 	Setup(
 		scenario Scenario,
-		consumer agenthooks.HookConsumer,
+		interceptor agenthooks.Interceptor,
 		resolver agenthooks.ApprovalResolver,
 		mode agenthooks.EnforcementMode,
 	) error

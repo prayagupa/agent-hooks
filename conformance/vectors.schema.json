@@ -5,7 +5,7 @@
   "description": "Language-agnostic conformance test case (AGENT-HOOKS-0.1 §13.2).",
   "type": "object",
   "additionalProperties": false,
-  "required": ["id", "title", "spec_clause", "level", "scenario", "consumer_script", "expect"],
+  "required": ["id", "title", "spec_clause", "level", "scenario", "interceptor_script", "expect"],
   "properties": {
     "id": { "type": "string", "pattern": "^AH-CTK-[0-9]{3}(-[a-z0-9-]+)?$" },
     "title": { "type": "string" },
@@ -23,9 +23,9 @@
       "default": []
     },
     "scenario": { "$ref": "#/$defs/scenario" },
-    "consumer_script": {
+    "interceptor_script": {
       "type": "array",
-      "items": { "$ref": "#/$defs/consumer_rule" }
+      "items": { "$ref": "#/$defs/interceptor_rule" }
     },
     "approval_script": {
       "type": "array",
@@ -104,16 +104,16 @@
         }
       }
     },
-    "consumer_rule": {
+    "interceptor_rule": {
       "type": "object",
       "additionalProperties": false,
       "required": ["at", "return"],
       "properties": {
-        "at": { "$ref": "https://agent-hooks.responsibleai.dev/v0.1/hook-point.schema.json" },
+        "at": { "$ref": "https://agent-hooks.responsibleai.dev/v0.1/interception-point.schema.json" },
         "match": {
           "type": "object",
           "additionalProperties": true,
-          "description": "Dotted-path -> expected-value predicates against the HookContext. All must match."
+          "description": "Dotted-path -> expected-value predicates against the AgentContext. All must match."
         },
         "return": { "$ref": "https://agent-hooks.responsibleai.dev/v0.1/verdict.schema.json" }
       }
@@ -137,28 +137,28 @@
     "expect": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["hooks", "run_outcome"],
+      "required": ["interceptions", "run_outcome"],
       "properties": {
-        "hooks": {
+        "interceptions": {
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["hook_point"],
+            "required": ["interception_point"],
             "properties": {
-              "hook_point": { "$ref": "https://agent-hooks.responsibleai.dev/v0.1/hook-point.schema.json" },
+              "interception_point": { "$ref": "https://agent-hooks.responsibleai.dev/v0.1/interception-point.schema.json" },
               "context": {
                 "type": "object",
                 "additionalProperties": true,
-                "description": "Dotted-path -> expected-value assertions against the recorded HookContext."
+                "description": "Dotted-path -> expected-value assertions against the recorded AgentContext."
               },
               "context_must_validate": { "type": "boolean", "default": true }
             }
           }
         },
         "sequence_strict": { "type": "boolean", "default": true },
-        "hooks_absent": {
+        "interceptions_absent": {
           "type": "array",
-          "items": { "$ref": "https://agent-hooks.responsibleai.dev/v0.1/hook-point.schema.json" }
+          "items": { "$ref": "https://agent-hooks.responsibleai.dev/v0.1/interception-point.schema.json" }
         },
         "tool_invocations": {
           "type": "array",
@@ -176,7 +176,7 @@
         "run_outcome": { "type": "string", "enum": ["completed", "blocked", "suspended", "error"] },
         "identities_equal": {
           "type": "boolean",
-          "description": "Assert input_identity == enforced_identity for all hooks (false to assert they differ at some hook)."
+          "description": "Assert input_identity == enforced_identity for all interception points (false to assert they differ at some interception point)."
         }
       }
     }

@@ -16,7 +16,7 @@ jobs:
       - name: Validate schemas are well-formed
         run: |
           set -e
-          all="spec/schema/*.json spec/schema/hook-context/*.json conformance/vectors.schema.json"
+          all="spec/schema/*.json spec/schema/agent-context/*.json conformance/vectors.schema.json"
           for f in $all; do
             # -r must not include the file under -s (ajv rejects duplicate $id)
             refs=$(ls $all | grep -vxF "$f" | sed 's/^/-r /' | tr '\n' ' ')
@@ -27,7 +27,7 @@ jobs:
           ajv validate --spec=draft2020 -c ajv-formats \
             -s conformance/vectors.schema.json \
             -r 'spec/schema/*.json' \
-            -r 'spec/schema/hook-context/*.json' \
+            -r 'spec/schema/agent-context/*.json' \
             -d 'conformance/vectors/*.json'
 
   python:

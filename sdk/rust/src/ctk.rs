@@ -8,7 +8,7 @@
 //! the Python implementation at `sdk/python/src/agent_hooks/ctk/runner.py`
 //! is the reference.
 
-use crate::{EnforcementMode, HookConsumer};
+use crate::{EnforcementMode, Interceptor};
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::Value;
@@ -68,12 +68,12 @@ pub trait Harness: Send {
     /// Capabilities this host supports (§3.2).
     fn capabilities(&self) -> HashSet<Capability>;
 
-    /// Wire mock model + tools from `scenario`, register `consumer` and
+    /// Wire mock model + tools from `scenario`, register `interceptor` and
     /// `resolver`, and set enforcement mode.
     fn setup(
         &mut self,
         scenario: Scenario,
-        consumer: Box<dyn HookConsumer>,
+        interceptor: Box<dyn Interceptor>,
         resolver: Option<Box<dyn ApprovalResolver>>,
         mode: EnforcementMode,
     );

@@ -7,8 +7,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol, runtime_checkable
 
-from agent_hooks._types import HookPoint, Verdict
-from agent_hooks.context import HookContext
+from agent_hooks._types import InterceptionPoint, Verdict
+from agent_hooks.context import AgentContext
 
 
 class ApprovalOutcome(str, Enum):
@@ -22,9 +22,9 @@ class ApprovalRequest:
     """What the host hands the resolver on ``escalate`` (§9)."""
 
     context_identity: str
-    hook_point: HookPoint
+    interception_point: InterceptionPoint
     verdict: Verdict
-    context: HookContext
+    context: AgentContext
 
 
 @dataclass(frozen=True, slots=True)

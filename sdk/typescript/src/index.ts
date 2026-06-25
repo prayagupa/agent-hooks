@@ -19,8 +19,8 @@ export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
-/** The closed set of agent lifecycle hook points (§3). */
-export const HookPoint = Object.freeze({
+/** The closed set of agent lifecycle interception points (§3). */
+export const InterceptionPoint = Object.freeze({
   AgentStartup: "agent_startup",
   Input: "input",
   PreModelCall: "pre_model_call",
@@ -30,11 +30,11 @@ export const HookPoint = Object.freeze({
   Output: "output",
   AgentShutdown: "agent_shutdown",
 } as const);
-export type HookPoint = (typeof HookPoint)[keyof typeof HookPoint];
+export type InterceptionPoint = (typeof InterceptionPoint)[keyof typeof InterceptionPoint];
 
 /** Whether a `transform` verdict is permitted at `hp` (§3, §4.3). */
-export function transformPermitted(hp: HookPoint): boolean {
-  return hp !== HookPoint.AgentStartup && hp !== HookPoint.AgentShutdown;
+export function transformPermitted(hp: InterceptionPoint): boolean {
+  return hp !== InterceptionPoint.AgentStartup && hp !== InterceptionPoint.AgentShutdown;
 }
 
 /** Verdict decision values (§5.1). */
@@ -59,22 +59,22 @@ export const EnforcementMode = Object.freeze({
 } as const);
 export type EnforcementMode = (typeof EnforcementMode)[keyof typeof EnforcementMode];
 
-/** Reserved `hook_error:*` reasons a host synthesizes (§11). */
-export const HookError = Object.freeze({
-  ContextInvalid: "hook_error:context_invalid",
-  ConsumerFailed: "hook_error:consumer_failed",
-  ConsumerTimeout: "hook_error:consumer_timeout",
-  VerdictInvalid: "hook_error:verdict_invalid",
-  TransformInvalid: "hook_error:transform_invalid",
-  TransformTargetForbidden: "hook_error:transform_target_forbidden",
-  ApprovalResolverMissing: "hook_error:approval_resolver_missing",
-  ApprovalResolverFailed: "hook_error:approval_resolver_failed",
-  ApprovalUnresolved: "hook_error:approval_unresolved",
-  ApprovalActionMismatch: "hook_error:approval_action_mismatch",
-  AdapterUnsupported: "hook_error:adapter_unsupported",
-  StreamingUnsupported: "hook_error:streaming_unsupported",
+/** Reserved `host_error:*` reasons a host synthesizes (§11). */
+export const HostError = Object.freeze({
+  ContextInvalid: "host_error:context_invalid",
+  InterceptorFailed: "host_error:interceptor_failed",
+  InterceptorTimeout: "host_error:interceptor_timeout",
+  VerdictInvalid: "host_error:verdict_invalid",
+  TransformInvalid: "host_error:transform_invalid",
+  TransformTargetForbidden: "host_error:transform_target_forbidden",
+  ApprovalResolverMissing: "host_error:approval_resolver_missing",
+  ApprovalResolverFailed: "host_error:approval_resolver_failed",
+  ApprovalUnresolved: "host_error:approval_unresolved",
+  ApprovalActionMismatch: "host_error:approval_action_mismatch",
+  AdapterUnsupported: "host_error:adapter_unsupported",
+  StreamingUnsupported: "host_error:streaming_unsupported",
 } as const);
-export type HookError = (typeof HookError)[keyof typeof HookError];
+export type HostError = (typeof HostError)[keyof typeof HostError];
 
 /** A single `$target`-rooted replacement (§5.2). */
 export interface Transform {
@@ -89,7 +89,7 @@ export interface Evidence {
   verification_pointers?: Record<string, string>;
 }
 
-/** Consumer return value (§5). */
+/** Interceptor return value (§5). */
 export interface Verdict {
   decision: Decision;
   reason?: string | null;
@@ -103,14 +103,14 @@ export interface Verdict {
 export const ALLOW: Readonly<Verdict> = Object.freeze({ decision: Decision.Allow });
 
 /** Host-synthesized deny verdict for a §11 failure. */
-export function hookErrorVerdict(err: HookError, message?: string): Verdict {
+export function hostErrorVerdict(err: HostError, message?: string): Verdict {
   return { decision: Decision.Deny, reason: err, message };
 }
 
 /** Validate per §5; throws on violation so the emitter maps to `verdict_invalid`. */
 export function validateVerdict(v: Verdict): void {
-  if (v.reason?.startsWith("hook_error:")) {
-    throw new Error("verdict.reason MUST NOT start with 'hook_error:' (§5)");
+  if (v.reason?.startsWith("host_error:")) {
+    throw new Error("verdict.reason MUST NOT start with 'host_error:' (§5)");
   }
   if (v.decision === Decision.Transform && !v.transform) {
     throw new Error("transform body REQUIRED when decision=='transform' (§5)");
@@ -123,10 +123,10 @@ export function validateVerdict(v: Verdict): void {
   }
 }
 
-/** Wire-shaped hook context (§4). L0 fields typed; L1/L2 indexed. */
-export interface HookContext {
+/** Wire-shaped agent context (§4). L0 fields typed; L1/L2 indexed. */
+export interface AgentContext {
   spec: string;
-  hook_point: HookPoint;
+  interception_point: InterceptionPoint;
   timestamp: string;
   sequence: number;
   agent: { id: string; framework: string; name?: string; version?: string };
@@ -136,9 +136,9 @@ export interface HookContext {
   [l1l2: string]: JsonValue | undefined;
 }
 
-/** Host-side record of one hook evaluation (§6, §10). */
-export interface HookResult {
-  hook_point: HookPoint;
+/** Host-side record of one interception (§6, §10). */
+export interface InterceptionRecord {
+  interception_point: InterceptionPoint;
   mode: EnforcementMode;
   verdict: Verdict;
   input_identity: string;
@@ -147,13 +147,13 @@ export interface HookResult {
 }
 
 /** Whether the guarded action executes (§6, §8). */
-export function proceeds(r: HookResult): boolean {
+export function proceeds(r: InterceptionRecord): boolean {
   return r.mode === EnforcementMode.EvaluateOnly || permits(r.verdict.decision);
 }
 
-/** Consumer protocol (§7). */
-export interface HookConsumer {
-  onHook(context: HookContext): Verdict | Promise<Verdict>;
+/** Interceptor protocol (§7). */
+export interface Interceptor {
+  intercept(context: AgentContext): Verdict | Promise<Verdict>;
 }
 
 /** Approval seam (§9). */
@@ -166,9 +166,9 @@ export type ApprovalOutcome = (typeof ApprovalOutcome)[keyof typeof ApprovalOutc
 
 export interface ApprovalRequest {
   context_identity: string;
-  hook_point: HookPoint;
+  interception_point: InterceptionPoint;
   verdict: Verdict;
-  context: HookContext;
+  context: AgentContext;
 }
 
 export interface ApprovalResolution {
@@ -183,10 +183,10 @@ export interface ApprovalResolver {
 
 // ---- Canonical JSON & context identity (§10) -------------------------------
 
-const L0 = new Set(["spec", "hook_point", "timestamp", "sequence", "agent", "session", "target"]);
+const L0 = new Set(["spec", "interception_point", "timestamp", "sequence", "agent", "session", "target"]);
 const L0_AGENT = new Set(["id", "framework"]);
 const L0_SESSION = new Set(["id"]);
-const L1: Record<HookPoint, readonly string[]> = {
+const L1: Record<InterceptionPoint, readonly string[]> = {
   agent_startup: ["agent_init"],
   input: ["input"],
   pre_model_call: ["model", "messages"],
@@ -232,8 +232,8 @@ export function canonicalJson(v: JsonValue): string {
   return out.join("");
 }
 
-function stripToL01(ctx: HookContext): JsonValue {
-  const l1 = new Set(L1[ctx.hook_point] ?? []);
+function stripToL01(ctx: AgentContext): JsonValue {
+  const l1 = new Set(L1[ctx.interception_point] ?? []);
   const out: Record<string, JsonValue> = {};
   for (const [k, v] of Object.entries(ctx)) {
     if (v === undefined) continue;
@@ -254,17 +254,17 @@ function stripToL01(ctx: HookContext): JsonValue {
 }
 
 /** `"sha256:" + hex(SHA-256(canonicalJson(ctx_L01)))` (§10.2). */
-export function contextIdentity(ctx: HookContext): string {
+export function contextIdentity(ctx: AgentContext): string {
   const json = canonicalJson(stripToL01(ctx));
   return "sha256:" + createHash("sha256").update(json, "utf8").digest("hex");
 }
 
 /** Raised by a host when a verdict blocks the guarded action (§6). */
-export class HookBlocked extends Error {
-  constructor(public readonly result: HookResult) {
+export class InterceptionBlocked extends Error {
+  constructor(public readonly result: InterceptionRecord) {
     super(
-      `${result.hook_point} blocked: ${result.verdict.decision} (${result.verdict.reason ?? "no reason"})`,
+      `${result.interception_point} blocked: ${result.verdict.decision} (${result.verdict.reason ?? "no reason"})`,
     );
-    this.name = "HookBlocked";
+    this.name = "InterceptionBlocked";
   }
 }

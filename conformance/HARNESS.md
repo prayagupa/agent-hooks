@@ -7,14 +7,14 @@ harness owns three responsibilities:
 1. **Wire the scenario.** Inject the vector's mock model (a deterministic
    response script) and mock tools (a `name → args → return` lookup table)
    into the framework so a run is hermetic — no real LLM, no real I/O.
-2. **Register the consumer.** Attach the CTK-supplied `HookConsumer` (a
-   `ScriptedConsumer` that records every `HookContext` and replays the
-   vector's `consumer_script`) at every hook point the framework supports.
+2. **Register the interceptor.** Attach the CTK-supplied `Interceptor` (a
+   `ScriptedInterceptor` that records every `AgentContext` and replays the
+   vector's `interceptor_script`) at every interception point the framework supports.
 3. **Run and report.** Execute one agent session and return a `RunRecord`
    describing what happened.
 
 The CTK runner handles everything else: loading vectors, building the
-scripted consumer/resolver, schema-validating recorded contexts, and asserting
+scripted interceptor/resolver, schema-validating recorded contexts, and asserting
 `expect`.
 
 ## Interface (per language)
@@ -22,7 +22,7 @@ scripted consumer/resolver, schema-validating recorded contexts, and asserting
 The exact signature is defined per SDK. The Python shape is canonical:
 
 ```python
-from agent_hooks import HookConsumer, ApprovalResolver, EnforcementMode
+from agent_hooks import Interceptor, ApprovalResolver, EnforcementMode
 from agent_hooks.ctk import Harness, Scenario, RunRecord, Capability
 
 class MyFrameworkHarness(Harness):
@@ -32,21 +32,21 @@ class MyFrameworkHarness(Harness):
     def setup(
         self,
         scenario: Scenario,
-        consumer: HookConsumer,
+        interceptor: Interceptor,
         resolver: ApprovalResolver | None,
         mode: EnforcementMode,
     ) -> None:
         # 1. Build a mock model from scenario.model_script
         # 2. Build mock tools from scenario.tools (record every invocation!)
         # 3. Construct your framework's agent with those mocks
-        # 4. Register `consumer` so it receives a HookContext at every hook
+        # 4. Register `interceptor` so it receives an AgentContext at every interception point
         # 5. Register `resolver` as the approval seam (if your framework
         #    supports escalate)
         # 6. Set enforcement mode
         ...
 
     async def run(self) -> RunRecord:
-        # Execute one session with scenario.input. Catch HookBlocked.
+        # Execute one session with scenario.input. Catch InterceptionBlocked.
         # Return outcome, final_output, and the tool-invocation log captured
         # by your mock tools.
         ...

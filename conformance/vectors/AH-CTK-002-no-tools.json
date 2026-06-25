@@ -11,18 +11,18 @@
       { "respond": { "content": "Hello!", "tool_calls": [], "finish_reason": "stop" } }
     ]
   },
-  "consumer_script": [],
+  "interceptor_script": [],
   "expect": {
     "sequence_strict": true,
-    "hooks": [
-      { "hook_point": "agent_startup", "context": { "agent_init.tools_registered": [] } },
-      { "hook_point": "input" },
-      { "hook_point": "pre_model_call" },
-      { "hook_point": "post_model_call", "context": { "response.tool_calls": [] } },
-      { "hook_point": "output", "context": { "output.content": "Hello!" } },
-      { "hook_point": "agent_shutdown", "context": { "summary.reason": "completed" } }
+    "interceptions": [
+      { "interception_point": "agent_startup", "context": { "agent_init.tools_registered": [] } },
+      { "interception_point": "input" },
+      { "interception_point": "pre_model_call" },
+      { "interception_point": "post_model_call", "context": { "response.tool_calls": [] } },
+      { "interception_point": "output", "context": { "output.content": "Hello!" } },
+      { "interception_point": "agent_shutdown", "context": { "summary.reason": "completed" } }
     ],
-    "hooks_absent": ["pre_tool_call", "post_tool_call"],
+    "interceptions_absent": ["pre_tool_call", "post_tool_call"],
     "run_outcome": "completed"
   }
 }

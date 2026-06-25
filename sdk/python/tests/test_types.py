@@ -1,20 +1,20 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
-"""Unit tests for §5 verdict validation and §3 hook-point properties."""
+"""Unit tests for §5 verdict validation and §3 interception-point properties."""
 from __future__ import annotations
 
 import pytest
 
-from agent_hooks import Decision, HookError, HookPoint, Transform, Verdict
+from agent_hooks import Decision, HostError, InterceptionPoint, Transform, Verdict
 
 
-class TestHookPoint:
+class TestInterceptionPoint:
     def test_eight_values(self) -> None:
-        assert len(HookPoint) == 8
+        assert len(InterceptionPoint) == 8
 
-    @pytest.mark.parametrize("hp", list(HookPoint))
-    def test_transform_permitted(self, hp: HookPoint) -> None:
-        forbidden = {HookPoint.AGENT_STARTUP, HookPoint.AGENT_SHUTDOWN}
+    @pytest.mark.parametrize("hp", list(InterceptionPoint))
+    def test_transform_permitted(self, hp: InterceptionPoint) -> None:
+        forbidden = {InterceptionPoint.AGENT_STARTUP, InterceptionPoint.AGENT_SHUTDOWN}
         assert hp.transform_permitted == (hp not in forbidden)
 
 
@@ -33,14 +33,14 @@ class TestVerdict:
         with pytest.raises(ValueError, match="FORBIDDEN"):
             Verdict(decision=Decision.ALLOW, transform=Transform("$target.x", 1))
 
-    def test_consumer_cannot_emit_hook_error_reason(self) -> None:
-        with pytest.raises(ValueError, match="hook_error"):
-            Verdict(decision=Decision.DENY, reason="hook_error:nope")
+    def test_interceptor_cannot_emit_host_error_reason(self) -> None:
+        with pytest.raises(ValueError, match="host_error"):
+            Verdict(decision=Decision.DENY, reason="host_error:nope")
 
-    def test_hook_error_factory_bypasses_check(self) -> None:
-        v = Verdict.hook_error(HookError.CONSUMER_FAILED)
+    def test_host_error_factory_bypasses_check(self) -> None:
+        v = Verdict.host_error(HostError.INTERCEPTOR_FAILED)
         assert v.decision is Decision.DENY
-        assert v.reason == "hook_error:consumer_failed"
+        assert v.reason == "host_error:interceptor_failed"
 
     def test_from_wire_roundtrip(self) -> None:
         wire = {

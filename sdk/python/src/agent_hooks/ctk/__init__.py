@@ -5,16 +5,16 @@ from __future__ import annotations
 
 from agent_hooks.ctk.harness import Capability, Harness, RunOutcome, RunRecord, Scenario
 from agent_hooks.ctk.runner import VectorResult, load_vectors, run_vector, run_vectors
-from agent_hooks.ctk.scripted import RecordingConsumer, ScriptedConsumer, ScriptedResolver
+from agent_hooks.ctk.scripted import RecordingInterceptor, ScriptedInterceptor, ScriptedResolver
 
 __all__ = [
     "Capability",
     "Harness",
-    "RecordingConsumer",
+    "RecordingInterceptor",
     "RunOutcome",
     "RunRecord",
     "Scenario",
-    "ScriptedConsumer",
+    "ScriptedInterceptor",
     "ScriptedResolver",
     "VectorResult",
     "load_vectors",

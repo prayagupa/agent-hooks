@@ -1,16 +1,16 @@
 {
-  "$id": "https://agent-hooks.responsibleai.dev/v0.1/hook-context.schema.json",
+  "$id": "https://agent-hooks.responsibleai.dev/v0.1/agent-context.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Agent Hooks — hook context",
-  "description": "Payload a host constructs at each hook point (AGENT-HOOKS-0.1 §4). L0 fields are always required; L1 fields are required conditionally on hook_point; L2 fields are optional; L3 lives under extensions.",
+  "title": "Agent Hooks — agent context",
+  "description": "Payload a host constructs at each interception point (AGENT-HOOKS-0.1 §4). L0 fields are always required; L1 fields are required conditionally on interception_point; L2 fields are optional; L3 lives under extensions.",
   "type": "object",
-  "required": ["spec", "hook_point", "timestamp", "sequence", "agent", "session", "target"],
+  "required": ["spec", "interception_point", "timestamp", "sequence", "agent", "session", "target"],
   "properties": {
     "spec": {
       "type": "string",
       "pattern": "^agent-hooks/\\d+\\.\\d+$"
     },
-    "hook_point": { "$ref": "hook-point.schema.json" },
+    "interception_point": { "$ref": "interception-point.schema.json" },
     "timestamp": { "type": "string", "format": "date-time" },
     "sequence": { "type": "integer", "minimum": 0 },
     "agent": {
@@ -88,35 +88,35 @@
   },
   "allOf": [
     {
-      "if": { "properties": { "hook_point": { "const": "agent_startup" } } },
+      "if": { "properties": { "interception_point": { "const": "agent_startup" } } },
       "then": { "required": ["agent_init"] }
     },
     {
-      "if": { "properties": { "hook_point": { "const": "input" } } },
+      "if": { "properties": { "interception_point": { "const": "input" } } },
       "then": { "required": ["input"] }
     },
     {
-      "if": { "properties": { "hook_point": { "const": "pre_model_call" } } },
+      "if": { "properties": { "interception_point": { "const": "pre_model_call" } } },
       "then": { "required": ["model", "messages"] }
     },
     {
-      "if": { "properties": { "hook_point": { "const": "post_model_call" } } },
+      "if": { "properties": { "interception_point": { "const": "post_model_call" } } },
       "then": { "required": ["model", "response"] }
     },
     {
-      "if": { "properties": { "hook_point": { "const": "pre_tool_call" } } },
+      "if": { "properties": { "interception_point": { "const": "pre_tool_call" } } },
       "then": { "required": ["tool_call"] }
     },
     {
-      "if": { "properties": { "hook_point": { "const": "post_tool_call" } } },
+      "if": { "properties": { "interception_point": { "const": "post_tool_call" } } },
       "then": { "required": ["tool_call", "tool_result"] }
     },
     {
-      "if": { "properties": { "hook_point": { "const": "output" } } },
+      "if": { "properties": { "interception_point": { "const": "output" } } },
       "then": { "required": ["output"] }
     },
     {
-      "if": { "properties": { "hook_point": { "const": "agent_shutdown" } } },
+      "if": { "properties": { "interception_point": { "const": "agent_shutdown" } } },
       "then": { "required": ["summary"] }
     }
   ],

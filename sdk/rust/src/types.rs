@@ -10,10 +10,10 @@ use std::collections::BTreeMap;
 /// Spec version this crate implements (§4.1 `spec` field).
 pub const SPEC_VERSION: &str = "agent-hooks/0.1";
 
-/// The closed set of agent lifecycle hook points (§3).
+/// The closed set of agent lifecycle interception points (§3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum HookPoint {
+pub enum InterceptionPoint {
     AgentStartup,
     Input,
     PreModelCall,
@@ -24,7 +24,7 @@ pub enum HookPoint {
     AgentShutdown,
 }
 
-impl HookPoint {
+impl InterceptionPoint {
     /// Wire name (snake_case).
     pub fn as_str(self) -> &'static str {
         match self {
@@ -71,32 +71,32 @@ pub enum EnforcementMode {
     EvaluateOnly,
 }
 
-/// Reserved `hook_error:*` reasons a host synthesizes (§11).
+/// Reserved `host_error:*` reasons a host synthesizes (§11).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum HookError {
-    #[error("hook_error:context_invalid")]
+pub enum HostError {
+    #[error("host_error:context_invalid")]
     ContextInvalid,
-    #[error("hook_error:consumer_failed")]
-    ConsumerFailed,
-    #[error("hook_error:consumer_timeout")]
-    ConsumerTimeout,
-    #[error("hook_error:verdict_invalid")]
+    #[error("host_error:interceptor_failed")]
+    InterceptorFailed,
+    #[error("host_error:interceptor_timeout")]
+    InterceptorTimeout,
+    #[error("host_error:verdict_invalid")]
     VerdictInvalid,
-    #[error("hook_error:transform_invalid")]
+    #[error("host_error:transform_invalid")]
     TransformInvalid,
-    #[error("hook_error:transform_target_forbidden")]
+    #[error("host_error:transform_target_forbidden")]
     TransformTargetForbidden,
-    #[error("hook_error:approval_resolver_missing")]
+    #[error("host_error:approval_resolver_missing")]
     ApprovalResolverMissing,
-    #[error("hook_error:approval_resolver_failed")]
+    #[error("host_error:approval_resolver_failed")]
     ApprovalResolverFailed,
-    #[error("hook_error:approval_unresolved")]
+    #[error("host_error:approval_unresolved")]
     ApprovalUnresolved,
-    #[error("hook_error:approval_action_mismatch")]
+    #[error("host_error:approval_action_mismatch")]
     ApprovalActionMismatch,
-    #[error("hook_error:adapter_unsupported")]
+    #[error("host_error:adapter_unsupported")]
     AdapterUnsupported,
-    #[error("hook_error:streaming_unsupported")]
+    #[error("host_error:streaming_unsupported")]
     StreamingUnsupported,
 }
 
@@ -118,7 +118,7 @@ pub struct Evidence {
     pub verification_pointers: BTreeMap<String, String>,
 }
 
-/// Consumer return value (§5).
+/// Interceptor return value (§5).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Verdict {
     pub decision: Decision,
@@ -148,7 +148,7 @@ impl Verdict {
     }
 
     /// Host-synthesized deny verdict for a §11 failure.
-    pub fn hook_error(err: HookError, message: Option<String>) -> Self {
+    pub fn host_error(err: HostError, message: Option<String>) -> Self {
         Self {
             decision: Decision::Deny,
             reason: Some(err.to_string()),
@@ -159,30 +159,30 @@ impl Verdict {
         }
     }
 
-    /// Validate per §5; returns `Err(HookError::VerdictInvalid)` on violation.
-    pub fn validate(&self) -> Result<(), HookError> {
+    /// Validate per §5; returns `Err(HostError::VerdictInvalid)` on violation.
+    pub fn validate(&self) -> Result<(), HostError> {
         if let Some(r) = &self.reason {
-            if r.starts_with("hook_error:") {
-                return Err(HookError::VerdictInvalid);
+            if r.starts_with("host_error:") {
+                return Err(HostError::VerdictInvalid);
             }
         }
         match (self.decision, &self.transform) {
             (Decision::Transform, None) | (_, Some(_)) if self.decision != Decision::Transform => {
-                Err(HookError::VerdictInvalid)
+                Err(HostError::VerdictInvalid)
             }
             _ => Ok(()),
         }
     }
 }
 
-/// Wire-shaped hook context (§4). Use `serde_json::Map` so it round-trips to
+/// Wire-shaped agent context (§4). Use `serde_json::Map` so it round-trips to
 /// the schema without translation; helpers in `canonical.rs` operate on it.
-pub type HookContext = serde_json::Map<String, Value>;
+pub type AgentContext = serde_json::Map<String, Value>;
 
-/// Host-side record of one hook evaluation (§6, §10).
+/// Host-side record of one interception (§6, §10).
 #[derive(Debug, Clone, Serialize)]
-pub struct HookResult {
-    pub hook_point: HookPoint,
+pub struct InterceptionRecord {
+    pub interception_point: InterceptionPoint,
     pub mode: EnforcementMode,
     pub verdict: Verdict,
     pub input_identity: String,
@@ -191,18 +191,18 @@ pub struct HookResult {
     pub transformed_target: Option<Value>,
 }
 
-impl HookResult {
+impl InterceptionRecord {
     /// Whether the guarded action executes (§6, §8).
     pub fn proceeds(&self) -> bool {
         matches!(self.mode, EnforcementMode::EvaluateOnly) || self.verdict.decision.permits()
     }
 }
 
-/// Consumer protocol (§7).
+/// Interceptor protocol (§7).
 #[async_trait]
-pub trait HookConsumer: Send + Sync {
-    /// Receive a `HookContext` and return a `Verdict`.
-    async fn on_hook(&self, context: &HookContext) -> Verdict;
+pub trait Interceptor: Send + Sync {
+    /// Receive an `AgentContext` and return a `Verdict`.
+    async fn intercept(&self, context: &AgentContext) -> Verdict;
 }
 
 /// Approval resolver outcome (§9).
@@ -218,9 +218,9 @@ pub enum ApprovalOutcome {
 #[derive(Debug, Clone)]
 pub struct ApprovalRequest<'a> {
     pub context_identity: String,
-    pub hook_point: HookPoint,
+    pub interception_point: InterceptionPoint,
     pub verdict: &'a Verdict,
-    pub context: &'a HookContext,
+    pub context: &'a AgentContext,
 }
 
 /// What the resolver returns (§9).

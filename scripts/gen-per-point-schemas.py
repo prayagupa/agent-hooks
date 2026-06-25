@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Generate spec/schema/hook-context/<hook_point>.schema.json from the master.
+"""Generate spec/schema/agent-context/<interception_point>.schema.json from the master.
 
 Each per-point schema is a closed (additionalProperties: false on the L1
-payload object) variant of hook-context.schema.json restricted to one
-hook_point value, used by the CTK for strict validation.
+payload object) variant of agent-context.schema.json restricted to one
+interception_point value, used by the CTK for strict validation.
 """
 from __future__ import annotations
 
@@ -11,10 +11,10 @@ import json
 import pathlib
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-MASTER = ROOT / "spec" / "schema" / "hook-context.schema.json"
-OUT = ROOT / "spec" / "schema" / "hook-context"
+MASTER = ROOT / "spec" / "schema" / "agent-context.schema.json"
+OUT = ROOT / "spec" / "schema" / "agent-context"
 
-# hook_point -> (extra L1 required fields beyond L0, payload $defs to close)
+# interception_point -> (extra L1 required fields beyond L0, payload $defs to close)
 L1: dict[str, tuple[list[str], list[str]]] = {
     "agent_startup": (["agent_init"], ["agent_init"]),
     "input": (["input"], ["input"]),
@@ -26,7 +26,7 @@ L1: dict[str, tuple[list[str], list[str]]] = {
     "agent_shutdown": (["summary"], ["summary"]),
 }
 
-L0_REQUIRED = ["spec", "hook_point", "timestamp", "sequence", "agent", "session", "target"]
+L0_REQUIRED = ["spec", "interception_point", "timestamp", "sequence", "agent", "session", "target"]
 
 
 def main() -> None:
@@ -39,18 +39,18 @@ def main() -> None:
             if d in defs and defs[d].get("type") == "object":
                 defs[d]["additionalProperties"] = False
         schema = {
-            "$id": f"https://agent-hooks.responsibleai.dev/v0.1/hook-context/{hp}.schema.json",
+            "$id": f"https://agent-hooks.responsibleai.dev/v0.1/agent-context/{hp}.schema.json",
             "$schema": "https://json-schema.org/draft/2020-12/schema",
-            "title": f"Agent Hooks — hook context ({hp})",
+            "title": f"Agent Hooks — agent context ({hp})",
             "description": (
-                f"Closed L0+L1 schema for hook_point={hp} "
+                f"Closed L0+L1 schema for interception_point={hp} "
                 f"(AGENT-HOOKS-0.1 §4.2). Used by the CTK for strict validation."
             ),
             "type": "object",
             "required": L0_REQUIRED + extra_req,
             "properties": {
                 **{k: master["properties"][k] for k in master["properties"]},
-                "hook_point": {"const": hp},
+                "interception_point": {"const": hp},
             },
             "$defs": defs,
         }

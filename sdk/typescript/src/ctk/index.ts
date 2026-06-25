@@ -13,7 +13,7 @@
 import type {
   ApprovalResolver,
   EnforcementMode,
-  HookConsumer,
+  Interceptor,
   JsonValue,
 } from "../index.js";
 
@@ -59,7 +59,7 @@ export interface Harness {
 
   setup(
     scenario: Scenario,
-    consumer: HookConsumer,
+    interceptor: Interceptor,
     resolver: ApprovalResolver | null,
     mode: EnforcementMode,
   ): void;

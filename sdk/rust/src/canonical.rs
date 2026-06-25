@@ -2,14 +2,14 @@
 // Licensed under the MIT License.
 //! Canonical JSON serialization and context identity (§10).
 
-use crate::types::HookContext;
+use crate::types::AgentContext;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::fmt::Write;
 
 const L0: &[&str] = &[
     "spec",
-    "hook_point",
+    "interception_point",
     "timestamp",
     "sequence",
     "agent",
@@ -82,9 +82,9 @@ pub fn canonical_json(v: &Value) -> String {
     out
 }
 
-fn strip_to_l01(ctx: &HookContext) -> Value {
+fn strip_to_l01(ctx: &AgentContext) -> Value {
     let hp = ctx
-        .get("hook_point")
+        .get("interception_point")
         .and_then(Value::as_str)
         .unwrap_or_default();
     let l1 = l1_for(hp);
@@ -116,7 +116,7 @@ fn filter_obj(v: &Value, keep: &[&str]) -> Value {
 }
 
 /// `"sha256:" + hex(SHA-256(canonical_json(ctx_L01)))` (§10.2).
-pub fn context_identity(ctx: &HookContext) -> String {
+pub fn context_identity(ctx: &AgentContext) -> String {
     let json = canonical_json(&strip_to_l01(ctx));
     let digest = Sha256::digest(json.as_bytes());
     let mut out = String::with_capacity(7 + 64);

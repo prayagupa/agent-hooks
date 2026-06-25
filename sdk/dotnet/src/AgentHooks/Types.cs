@@ -14,8 +14,8 @@ public static class Spec
     public const string Version = "agent-hooks/0.1";
 }
 
-/// <summary>The closed set of agent lifecycle hook points (§3).</summary>
-public enum HookPoint
+/// <summary>The closed set of agent lifecycle interception points (§3).</summary>
+public enum InterceptionPoint
 {
     AgentStartup,
     Input,
@@ -27,37 +27,37 @@ public enum HookPoint
     AgentShutdown,
 }
 
-public static class HookPointExtensions
+public static class InterceptionPointExtensions
 {
-    public static string ToWireName(this HookPoint hp) => hp switch
+    public static string ToWireName(this InterceptionPoint hp) => hp switch
     {
-        HookPoint.AgentStartup => "agent_startup",
-        HookPoint.Input => "input",
-        HookPoint.PreModelCall => "pre_model_call",
-        HookPoint.PostModelCall => "post_model_call",
-        HookPoint.PreToolCall => "pre_tool_call",
-        HookPoint.PostToolCall => "post_tool_call",
-        HookPoint.Output => "output",
-        HookPoint.AgentShutdown => "agent_shutdown",
+        InterceptionPoint.AgentStartup => "agent_startup",
+        InterceptionPoint.Input => "input",
+        InterceptionPoint.PreModelCall => "pre_model_call",
+        InterceptionPoint.PostModelCall => "post_model_call",
+        InterceptionPoint.PreToolCall => "pre_tool_call",
+        InterceptionPoint.PostToolCall => "post_tool_call",
+        InterceptionPoint.Output => "output",
+        InterceptionPoint.AgentShutdown => "agent_shutdown",
         _ => throw new ArgumentOutOfRangeException(nameof(hp)),
     };
 
-    public static HookPoint FromWireName(string s) => s switch
+    public static InterceptionPoint FromWireName(string s) => s switch
     {
-        "agent_startup" => HookPoint.AgentStartup,
-        "input" => HookPoint.Input,
-        "pre_model_call" => HookPoint.PreModelCall,
-        "post_model_call" => HookPoint.PostModelCall,
-        "pre_tool_call" => HookPoint.PreToolCall,
-        "post_tool_call" => HookPoint.PostToolCall,
-        "output" => HookPoint.Output,
-        "agent_shutdown" => HookPoint.AgentShutdown,
-        _ => throw new ArgumentOutOfRangeException(nameof(s), s, "Unknown hook point"),
+        "agent_startup" => InterceptionPoint.AgentStartup,
+        "input" => InterceptionPoint.Input,
+        "pre_model_call" => InterceptionPoint.PreModelCall,
+        "post_model_call" => InterceptionPoint.PostModelCall,
+        "pre_tool_call" => InterceptionPoint.PreToolCall,
+        "post_tool_call" => InterceptionPoint.PostToolCall,
+        "output" => InterceptionPoint.Output,
+        "agent_shutdown" => InterceptionPoint.AgentShutdown,
+        _ => throw new ArgumentOutOfRangeException(nameof(s), s, "Unknown interception point"),
     };
 
     /// <summary>Whether a <c>transform</c> verdict is permitted at this point (§3, §4.3).</summary>
-    public static bool TransformPermitted(this HookPoint hp) =>
-        hp is not (HookPoint.AgentStartup or HookPoint.AgentShutdown);
+    public static bool TransformPermitted(this InterceptionPoint hp) =>
+        hp is not (InterceptionPoint.AgentStartup or InterceptionPoint.AgentShutdown);
 }
 
 /// <summary>Verdict decision values (§5.1).</summary>
@@ -83,21 +83,21 @@ public static class DecisionExtensions
 /// <summary>Whether the host acts on verdicts (§8).</summary>
 public enum EnforcementMode { Enforce, EvaluateOnly }
 
-/// <summary>Reserved <c>hook_error:*</c> reasons a host synthesizes (§11).</summary>
-public static class HookError
+/// <summary>Reserved <c>host_error:*</c> reasons a host synthesizes (§11).</summary>
+public static class HostError
 {
-    public const string ContextInvalid = "hook_error:context_invalid";
-    public const string ConsumerFailed = "hook_error:consumer_failed";
-    public const string ConsumerTimeout = "hook_error:consumer_timeout";
-    public const string VerdictInvalid = "hook_error:verdict_invalid";
-    public const string TransformInvalid = "hook_error:transform_invalid";
-    public const string TransformTargetForbidden = "hook_error:transform_target_forbidden";
-    public const string ApprovalResolverMissing = "hook_error:approval_resolver_missing";
-    public const string ApprovalResolverFailed = "hook_error:approval_resolver_failed";
-    public const string ApprovalUnresolved = "hook_error:approval_unresolved";
-    public const string ApprovalActionMismatch = "hook_error:approval_action_mismatch";
-    public const string AdapterUnsupported = "hook_error:adapter_unsupported";
-    public const string StreamingUnsupported = "hook_error:streaming_unsupported";
+    public const string ContextInvalid = "host_error:context_invalid";
+    public const string InterceptorFailed = "host_error:interceptor_failed";
+    public const string InterceptorTimeout = "host_error:interceptor_timeout";
+    public const string VerdictInvalid = "host_error:verdict_invalid";
+    public const string TransformInvalid = "host_error:transform_invalid";
+    public const string TransformTargetForbidden = "host_error:transform_target_forbidden";
+    public const string ApprovalResolverMissing = "host_error:approval_resolver_missing";
+    public const string ApprovalResolverFailed = "host_error:approval_resolver_failed";
+    public const string ApprovalUnresolved = "host_error:approval_unresolved";
+    public const string ApprovalActionMismatch = "host_error:approval_action_mismatch";
+    public const string AdapterUnsupported = "host_error:adapter_unsupported";
+    public const string StreamingUnsupported = "host_error:streaming_unsupported";
 }
 
 /// <summary>A single <c>$target</c>-rooted replacement (§5.2).</summary>
@@ -108,7 +108,7 @@ public sealed record Evidence(
     string? Artefact = null,
     IReadOnlyDictionary<string, string>? VerificationPointers = null);
 
-/// <summary>Consumer return value (§5).</summary>
+/// <summary>Interceptor return value (§5).</summary>
 public sealed record Verdict(
     Decision Decision,
     string? Reason = null,
@@ -121,14 +121,14 @@ public sealed record Verdict(
     public static readonly Verdict Allow = new(Decision.Allow);
 
     /// <summary>Host-synthesized deny verdict for a §11 failure.</summary>
-    public static Verdict FromHookError(string hookError, string? message = null) =>
+    public static Verdict FromHostError(string hookError, string? message = null) =>
         new(Decision.Deny, Reason: hookError, Message: message);
 
     /// <summary>Validate per §5; throws <see cref="ArgumentException"/> on violation.</summary>
     public void Validate()
     {
-        if (Reason?.StartsWith("hook_error:", StringComparison.Ordinal) == true)
-            throw new ArgumentException("verdict.reason MUST NOT start with 'hook_error:' (§5)");
+        if (Reason?.StartsWith("host_error:", StringComparison.Ordinal) == true)
+            throw new ArgumentException("verdict.reason MUST NOT start with 'host_error:' (§5)");
         if (Decision == Decision.Transform && Transform is null)
             throw new ArgumentException("transform body REQUIRED when decision=='transform' (§5)");
         if (Decision != Decision.Transform && Transform is not null)
@@ -136,24 +136,24 @@ public sealed record Verdict(
     }
 }
 
-/// <summary>Wire-shaped hook context (§4). Wraps a <see cref="JsonObject"/> so
+/// <summary>Wire-shaped agent context (§4). Wraps a <see cref="JsonObject"/> so
 /// it round-trips to the schema without translation; <see cref="JsonObject"/>
 /// is sealed so this is composition, not inheritance.</summary>
-public readonly struct HookContext(JsonObject json)
+public readonly struct AgentContext(JsonObject json)
 {
     public JsonObject Json { get; } = json;
 
     public JsonNode? this[string key] => Json[key];
 
-    public HookPoint HookPoint => HookPointExtensions.FromWireName((string)Json["hook_point"]!);
+    public InterceptionPoint InterceptionPoint => InterceptionPointExtensions.FromWireName((string)Json["interception_point"]!);
 
-    public static implicit operator JsonObject(HookContext ctx) => ctx.Json;
-    public static implicit operator HookContext(JsonObject json) => new(json);
+    public static implicit operator JsonObject(AgentContext ctx) => ctx.Json;
+    public static implicit operator AgentContext(JsonObject json) => new(json);
 }
 
-/// <summary>Host-side record of one hook evaluation (§6, §10).</summary>
-public sealed record HookResult(
-    HookPoint HookPoint,
+/// <summary>Host-side record of one interception (§6, §10).</summary>
+public sealed record InterceptionRecord(
+    InterceptionPoint InterceptionPoint,
     EnforcementMode Mode,
     Verdict Verdict,
     string InputIdentity,
@@ -164,10 +164,10 @@ public sealed record HookResult(
     public bool Proceeds => Mode == EnforcementMode.EvaluateOnly || Verdict.Decision.Permits();
 }
 
-/// <summary>Consumer protocol (§7).</summary>
-public interface IHookConsumer
+/// <summary>Interceptor protocol (§7).</summary>
+public interface IInterceptor
 {
-    ValueTask<Verdict> OnHookAsync(HookContext context, CancellationToken ct = default);
+    ValueTask<Verdict> InterceptAsync(AgentContext context, CancellationToken ct = default);
 }
 
 /// <summary>Approval seam (§9).</summary>
@@ -175,9 +175,9 @@ public enum ApprovalOutcome { Approve, Reject, Unresolved }
 
 public sealed record ApprovalRequest(
     string ContextIdentity,
-    HookPoint HookPoint,
+    InterceptionPoint InterceptionPoint,
     Verdict Verdict,
-    HookContext Context);
+    AgentContext Context);
 
 public sealed record ApprovalResolution(
     ApprovalOutcome Outcome,
@@ -190,9 +190,9 @@ public interface IApprovalResolver
 }
 
 /// <summary>Raised by a host when a verdict blocks the guarded action (§6).</summary>
-public sealed class HookBlockedException(HookResult result)
+public sealed class InterceptionBlockedException(InterceptionRecord result)
     : InvalidOperationException(
-        $"{result.HookPoint.ToWireName()} blocked: {result.Verdict.Decision.ToWireName()} ({result.Verdict.Reason ?? "no reason"})")
+        $"{result.InterceptionPoint.ToWireName()} blocked: {result.Verdict.Decision.ToWireName()} ({result.Verdict.Reason ?? "no reason"})")
 {
-    public HookResult Result { get; } = result;
+    public InterceptionRecord Result { get; } = result;
 }

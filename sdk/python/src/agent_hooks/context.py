@@ -1,30 +1,30 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
-"""``HookContext`` construction (§4).
+"""``AgentContext`` construction (§4).
 
-A :class:`HookContext` is a plain ``dict[str, Any]`` so it serializes to wire
-JSON without translation. :class:`HookContextBuilder` is the host-side helper
+A :class:`AgentContext` is a plain ``dict[str, Any]`` so it serializes to wire
+JSON without translation. :class:`AgentContextBuilder` is the host-side helper
 that owns the L0 envelope (agent/session/sequence) and exposes one method per
-hook point that fills L1 and sets ``target``.
+interception point that fills L1 and sets ``target``.
 """
 from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any, TypeAlias
 
-from agent_hooks._types import SPEC_VERSION, HookPoint
+from agent_hooks._types import SPEC_VERSION, InterceptionPoint
 
-#: A hook context is wire-shaped JSON: ``dict[str, Any]`` validated against
-#: ``spec/schema/hook-context.schema.json``.
-HookContext: TypeAlias = dict[str, Any]
+#: A agent context is wire-shaped JSON: ``dict[str, Any]`` validated against
+#: ``spec/schema/agent-context.schema.json``.
+AgentContext: TypeAlias = dict[str, Any]
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
-class HookContextBuilder:
-    """Stateful per-session builder for :class:`HookContext` values.
+class AgentContextBuilder:
+    """Stateful per-session builder for :class:`AgentContext` values.
 
     Owns ``sequence`` and the L0 ``agent``/``session`` envelope so adapter
     code never has to thread them. One instance per session.
@@ -53,16 +53,16 @@ class HookContextBuilder:
         self._seq = 0
         self._l2: dict[str, Any] = {}
 
-    def with_l2(self, **fields: Any) -> HookContextBuilder:
+    def with_l2(self, **fields: Any) -> AgentContextBuilder:
         """Attach L2 fields (``trace``, ``tenant``, ``budgets``, ``actor``…)
         to every subsequent context."""
         self._l2.update({k: v for k, v in fields.items() if v is not None})
         return self
 
-    def _envelope(self, hp: HookPoint, target: Any) -> HookContext:
-        ctx: HookContext = {
+    def _envelope(self, hp: InterceptionPoint, target: Any) -> AgentContext:
+        ctx: AgentContext = {
             "spec": SPEC_VERSION,
-            "hook_point": hp.value,
+            "interception_point": hp.value,
             "timestamp": _now(),
             "sequence": self._seq,
             "agent": dict(self._agent),
@@ -75,15 +75,15 @@ class HookContextBuilder:
 
     # ---- per-hook L1 builders ------------------------------------------------
 
-    def agent_startup(self, *, tools_registered: list[str], **extra: Any) -> HookContext:
+    def agent_startup(self, *, tools_registered: list[str], **extra: Any) -> AgentContext:
         agent_init = {"tools_registered": list(tools_registered), **extra}
-        ctx = self._envelope(HookPoint.AGENT_STARTUP, agent_init)
+        ctx = self._envelope(InterceptionPoint.AGENT_STARTUP, agent_init)
         ctx["agent_init"] = agent_init
         return ctx
 
-    def input(self, *, content: Any, role: str = "user", **extra: Any) -> HookContext:
+    def input(self, *, content: Any, role: str = "user", **extra: Any) -> AgentContext:
         inp = {"content": content, "role": role, **extra}
-        ctx = self._envelope(HookPoint.INPUT, inp)
+        ctx = self._envelope(InterceptionPoint.INPUT, inp)
         ctx["input"] = inp
         return ctx
 
@@ -95,8 +95,8 @@ class HookContextBuilder:
         tools: list[dict[str, Any]] | None = None,
         request_id: str | None = None,
         **model_extra: Any,
-    ) -> HookContext:
-        ctx = self._envelope(HookPoint.PRE_MODEL_CALL, messages)
+    ) -> AgentContext:
+        ctx = self._envelope(InterceptionPoint.PRE_MODEL_CALL, messages)
         ctx["model"] = {"id": model_id, **model_extra}
         ctx["messages"] = messages
         if tools is not None:
@@ -114,13 +114,13 @@ class HookContextBuilder:
         finish_reason: str,
         usage: dict[str, int] | None = None,
         request_id: str | None = None,
-    ) -> HookContext:
+    ) -> AgentContext:
         response = {
             "content": content,
             "tool_calls": list(tool_calls),
             "finish_reason": finish_reason,
         }
-        ctx = self._envelope(HookPoint.POST_MODEL_CALL, response)
+        ctx = self._envelope(InterceptionPoint.POST_MODEL_CALL, response)
         ctx["model"] = {"id": model_id}
         ctx["response"] = response
         if usage is not None:
@@ -131,9 +131,9 @@ class HookContextBuilder:
 
     def pre_tool_call(
         self, *, call_id: str, name: str, args: dict[str, Any], **extra: Any
-    ) -> HookContext:
+    ) -> AgentContext:
         tc = {"id": call_id, "name": name, "args": args, **extra}
-        ctx = self._envelope(HookPoint.PRE_TOOL_CALL, args)
+        ctx = self._envelope(InterceptionPoint.PRE_TOOL_CALL, args)
         ctx["tool_call"] = tc
         return ctx
 
@@ -146,23 +146,23 @@ class HookContextBuilder:
         value: Any,
         is_error: bool = False,
         duration_ms: float | None = None,
-    ) -> HookContext:
+    ) -> AgentContext:
         tr: dict[str, Any] = {"value": value, "is_error": is_error}
         if duration_ms is not None:
             tr["duration_ms"] = duration_ms
-        ctx = self._envelope(HookPoint.POST_TOOL_CALL, value)
+        ctx = self._envelope(InterceptionPoint.POST_TOOL_CALL, value)
         ctx["tool_call"] = {"id": call_id, "name": name, "args": args}
         ctx["tool_result"] = tr
         return ctx
 
-    def output(self, *, content: Any, **extra: Any) -> HookContext:
+    def output(self, *, content: Any, **extra: Any) -> AgentContext:
         out = {"content": content, **extra}
-        ctx = self._envelope(HookPoint.OUTPUT, out)
+        ctx = self._envelope(InterceptionPoint.OUTPUT, out)
         ctx["output"] = out
         return ctx
 
-    def agent_shutdown(self, *, reason: str, **summary_extra: Any) -> HookContext:
+    def agent_shutdown(self, *, reason: str, **summary_extra: Any) -> AgentContext:
         summary = {"reason": reason, **summary_extra}
-        ctx = self._envelope(HookPoint.AGENT_SHUTDOWN, summary)
+        ctx = self._envelope(InterceptionPoint.AGENT_SHUTDOWN, summary)
         ctx["summary"] = summary
         return ctx

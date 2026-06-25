@@ -12,11 +12,11 @@ from typing import Any, ClassVar
 
 from agent_hooks._types import EnforcementMode
 from agent_hooks.approval import ApprovalResolver
-from agent_hooks.consumer import HookConsumer
-from agent_hooks.context import HookContextBuilder
+from agent_hooks.context import AgentContextBuilder
 from agent_hooks.ctk.harness import Capability, RunOutcome, RunRecord, Scenario
-from agent_hooks.emitter import HookEmitter
-from agent_hooks.exceptions import HookBlocked
+from agent_hooks.emitter import InterceptionEmitter
+from agent_hooks.exceptions import InterceptionBlocked
+from agent_hooks.interceptor import Interceptor
 
 
 class ReferenceHarness:
@@ -29,8 +29,8 @@ class ReferenceHarness:
 
     def __init__(self) -> None:
         self._scenario: Scenario | None = None
-        self._emitter: HookEmitter | None = None
-        self._builder: HookContextBuilder | None = None
+        self._emitter: InterceptionEmitter | None = None
+        self._builder: AgentContextBuilder | None = None
         self._tool_log: list[dict[str, Any]] = []
 
     # ---- Harness protocol ---------------------------------------------------
@@ -38,14 +38,14 @@ class ReferenceHarness:
     def setup(
         self,
         scenario: Scenario,
-        consumer: HookConsumer,
+        interceptor: Interceptor,
         resolver: ApprovalResolver | None,
         mode: EnforcementMode,
     ) -> None:
         self._scenario = scenario
         self._tool_log = []
-        self._emitter = HookEmitter(mode=mode, resolver=resolver).register(consumer)
-        self._builder = HookContextBuilder(
+        self._emitter = InterceptionEmitter(mode=mode, resolver=resolver).register(interceptor)
+        self._builder = AgentContextBuilder(
             agent_id="ref-agent",
             framework="reference-agent",
             session_id=str(uuid.uuid4()),
@@ -80,7 +80,7 @@ class ReferenceHarness:
                     for tc in resp.tool_calls:
                         try:
                             await self._do_tool_call(tc, messages)
-                        except HookBlocked as e:
+                        except InterceptionBlocked as e:
                             messages.append(
                                 {
                                     "role": "tool",
@@ -95,7 +95,7 @@ class ReferenceHarness:
                 ctx = b.output(content=final)
                 await em.emit_or_raise(ctx)
                 final = ctx["output"]["content"]
-        except HookBlocked:
+        except InterceptionBlocked:
             outcome = RunOutcome.BLOCKED
             final = None
         await em.emit(

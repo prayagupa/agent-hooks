@@ -2,8 +2,8 @@
 
 | Level | Name | Vectors | What it proves |
 | --- | --- | --- | --- |
-| **1** | Observing | `AH-CTK-0[0-9][0-9]` | Host emits all applicable hook points in spec order with schema-valid L0+L1 context. Verdicts may be ignored. Suitable for observability/audit consumers. |
-| **2** | Enforcing | Level 1 + `AH-CTK-0[1-5][0-9]` | Host honours `deny`, `transform`, `escalate` (with approval seam), and `evaluate_only`. Suitable for policy/governance consumers (ACS). |
+| **1** | Instrumented | `AH-CTK-0[0-9][0-9]` | Host emits all applicable interception points in spec order with schema-valid L0+L1 context. Verdicts may be ignored. Adapter-development milestone; not a production control claim. |
+| **2** | Enforcing | Level 1 + `AH-CTK-0[1-5][0-9]` | Host honours `deny`, `transform`, `escalate` (with approval seam), and `evaluate_only`. Suitable for policy/governance interceptors (ACS). |
 | **3** | Complete | Level 2 + `AH-CTK-0[6-9][0-9]` | Host populates L2 fields, persists & resurfaces `result_labels`, handles parallel tool calls and streaming per §12, and produces stable `context_identity`. |
 
 A claim of Level N requires **100% pass** on all non-skipped vectors at
@@ -14,7 +14,7 @@ harness's declared capabilities.
 
 | ID | Level | Clause | Title |
 | --- | --- | --- | --- |
-| AH-CTK-001 | 1 | §3.1, §4 | All eight hooks fire in spec order with valid context |
+| AH-CTK-001 | 1 | §3.1, §4 | All eight interception points fire in spec order with valid context |
 | AH-CTK-002 | 1 | §3.1, §3.2 | Loop without tools omits pre/post_tool_call |
 | AH-CTK-003 | 1 | §3.1.6 | sequence strictly increasing |
 | AH-CTK-010 | 2 | §6, §6.2 | deny at pre_tool_call halts tool; no post_tool_call |

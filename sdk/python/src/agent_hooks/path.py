@@ -6,7 +6,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from agent_hooks._types import HookError
+from agent_hooks._types import HostError
 
 _ROOT_RE = re.compile(r"^\$(target|policy_target)")
 _SEGMENT_RE = re.compile(
@@ -22,9 +22,9 @@ _SEGMENT_RE = re.compile(
 class PathError(ValueError):
     """A transform path failed to parse or resolve."""
 
-    def __init__(self, hook_error: HookError, detail: str) -> None:
-        self.hook_error = hook_error
-        super().__init__(f"{hook_error.value}: {detail}")
+    def __init__(self, host_error: HostError, detail: str) -> None:
+        self.host_error = host_error
+        super().__init__(f"{host_error.value}: {detail}")
 
 
 def parse(path: str) -> list[str | int]:
@@ -32,7 +32,7 @@ def parse(path: str) -> list[str | int]:
     m = _ROOT_RE.match(path)
     if not m:
         raise PathError(
-            HookError.TRANSFORM_TARGET_FORBIDDEN,
+            HostError.TRANSFORM_TARGET_FORBIDDEN,
             f"path must be rooted at $target (got {path!r})",
         )
     pos = m.end()
@@ -40,7 +40,7 @@ def parse(path: str) -> list[str | int]:
     while pos < len(path):
         sm = _SEGMENT_RE.match(path, pos)
         if not sm:
-            raise PathError(HookError.TRANSFORM_INVALID, f"unparseable segment at {path[pos:]!r}")
+            raise PathError(HostError.TRANSFORM_INVALID, f"unparseable segment at {path[pos:]!r}")
         if sm.group("dot") is not None:
             segs.append(sm.group("dot"))
         elif sm.group("idx") is not None:
@@ -59,7 +59,7 @@ def resolve(target: Any, path: str) -> Any:
             cur = cur[seg]
         except (KeyError, IndexError, TypeError) as e:
             raise PathError(
-                HookError.TRANSFORM_INVALID, f"segment {seg!r} did not resolve: {e}"
+                HostError.TRANSFORM_INVALID, f"segment {seg!r} did not resolve: {e}"
             ) from e
     return cur
 
@@ -80,13 +80,13 @@ def apply(target: Any, path: str, value: Any) -> Any:
             cur = cur[seg]
         except (KeyError, IndexError, TypeError) as e:
             raise PathError(
-                HookError.TRANSFORM_INVALID, f"segment {seg!r} did not resolve: {e}"
+                HostError.TRANSFORM_INVALID, f"segment {seg!r} did not resolve: {e}"
             ) from e
     last = segs[-1]
     try:
         cur[last] = value
     except (IndexError, TypeError) as e:
         raise PathError(
-            HookError.TRANSFORM_INVALID, f"cannot set {last!r}: {e}"
+            HostError.TRANSFORM_INVALID, f"cannot set {last!r}: {e}"
         ) from e
     return target

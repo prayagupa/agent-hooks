@@ -12,13 +12,13 @@
       { "respond": { "content": "done", "tool_calls": [], "finish_reason": "stop" } }
     ]
   },
-  "consumer_script": [
+  "interceptor_script": [
     { "at": "pre_tool_call", "return": { "decision": "warn", "reason": "ctk:suspicious", "message": "looks odd" } }
   ],
   "expect": {
     "sequence_strict": false,
-    "hooks": [
-      { "hook_point": "post_tool_call", "context": { "tool_call.args.url": "https://x", "tool_result.value": "ok" } }
+    "interceptions": [
+      { "interception_point": "post_tool_call", "context": { "tool_call.args.url": "https://x", "tool_result.value": "ok" } }
     ],
     "tool_invocations": [ { "name": "http_get", "args": { "url": "https://x" } } ],
     "run_outcome": "completed",

@@ -7,14 +7,14 @@
     "request": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["context_identity", "hook_point", "verdict"],
+      "required": ["context_identity", "interception_point", "verdict"],
       "properties": {
         "context_identity": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
-        "hook_point": { "$ref": "hook-point.schema.json" },
+        "interception_point": { "$ref": "interception-point.schema.json" },
         "verdict": { "$ref": "verdict.schema.json" },
         "context": {
-          "description": "The HookContext that produced the escalate verdict. MAY be redacted per host policy.",
-          "$ref": "hook-context.schema.json"
+          "description": "The AgentContext that produced the escalate verdict. MAY be redacted per host policy.",
+          "$ref": "agent-context.schema.json"
         }
       }
     },

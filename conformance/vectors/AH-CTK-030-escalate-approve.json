@@ -15,7 +15,7 @@
       { "respond": { "content": "sent", "tool_calls": [], "finish_reason": "stop" } }
     ]
   },
-  "consumer_script": [
+  "interceptor_script": [
     { "at": "pre_tool_call",
       "match": { "tool_call.name": "wire_transfer" },
       "return": { "decision": "escalate", "reason": "ctk:requires_approval" } }
@@ -25,9 +25,9 @@
   ],
   "expect": {
     "sequence_strict": false,
-    "hooks": [
-      { "hook_point": "pre_tool_call", "context": { "tool_call.name": "wire_transfer" } },
-      { "hook_point": "post_tool_call", "context": { "tool_result.value.txn": "tx-1" } }
+    "interceptions": [
+      { "interception_point": "pre_tool_call", "context": { "tool_call.name": "wire_transfer" } },
+      { "interception_point": "post_tool_call", "context": { "tool_result.value.txn": "tx-1" } }
     ],
     "tool_invocations": [ { "name": "wire_transfer", "args": { "amount": 100 } } ],
     "run_outcome": "completed"

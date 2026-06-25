@@ -2,15 +2,20 @@
 
 > **Status:** Draft · **Spec:** [AGENT-HOOKS-0.1](spec/AGENT-HOOKS-0.1.md)
 
-A framework-neutral contract for **lifecycle hooks** in AI agent systems: a
-fixed set of hook points, the context payload a host framework supplies at
-each, the verdict a hook consumer returns, and the obligations a host MUST
-honour for each verdict — plus a multi-language Conformance Test Kit.
+A framework-neutral **control** contract for AI agent systems: a fixed set
+of interception points, the agent context a host framework supplies at each,
+the verdict an interceptor returns, and the obligations a host MUST honour
+for each verdict. Ships with a multi-language Conformance Test Kit.
 
 Extracted from the [Agent Control Specification][acs] (which becomes one
-conformant consumer) so that **any** agent framework can expose the same
-interception surface and **any** consumer — policy engine, observability,
-audit, cost tracking — can target it.
+conformant interceptor) so that any agent framework can expose the same
+control surface and any control component (policy engine, content filter,
+rate limiter, approval gateway, egress guard) can target it.
+
+agent-hooks is a control plane, not a telemetry plane. Every interceptor
+returns a `Verdict` the host MUST act on. Passive observation, tracing, and
+metrics emission are out of scope; use the framework's native telemetry for
+those.
 
 [acs]: https://github.com/microsoft/agent-governance-toolkit
 
@@ -19,7 +24,7 @@ audit, cost tracking — can target it.
 | Path | What |
 | --- | --- |
 | [`spec/AGENT-HOOKS-0.1.md`](spec/AGENT-HOOKS-0.1.md) | Normative RFC-2119 spec |
-| [`spec/schema/`](spec/schema/) | Machine-readable JSON Schemas (hook-point, hook-context, verdict, …) |
+| [`spec/schema/`](spec/schema/) | Machine-readable JSON Schemas (interception-point, agent-context, verdict, …) |
 | [`conformance/vectors/`](conformance/vectors/) | Language-agnostic CTK test vectors |
 | [`conformance/HARNESS.md`](conformance/HARNESS.md) | How to write a harness for your framework |
 | [`sdk/python/`](sdk/python/) | Reference SDK: types + emitter + **complete CTK runner** |
@@ -35,12 +40,12 @@ audit, cost tracking — can target it.
 │                                                output ─► shutdown
 │        │              │              │              │           │
 │        ▼              ▼              ▼              ▼           │
-│   HookContext    HookContext    HookContext    HookContext      │
+│   AgentContext    AgentContext    AgentContext    AgentContext      │
 │        │              │              │              │           │
 └────────┼──────────────┼──────────────┼──────────────┼───────────┘
          ▼              ▼              ▼              ▼
-   ┌───────────────── HookConsumer.on_hook(ctx) ──────────────┐
-   │              (ACS, OTel, audit, custom …)                │
+   ┌───────────────── Interceptor.intercept(ctx) ──────────────┐
+   │     (ACS, content filter, rate limiter, egress guard…)    │
    └─────────────────────────┬────────────────────────────────┘
                              ▼
                    Verdict { allow | deny | warn | escalate | transform }
@@ -56,8 +61,8 @@ audit, cost tracking — can target it.
 **Host (framework adapter):** see [`sdk/python/README.md`](sdk/python/README.md)
 and [`conformance/HARNESS.md`](conformance/HARNESS.md).
 
-**Consumer:** implement `HookConsumer.on_hook(HookContext) -> Verdict` in any
-SDK; register with the host.
+**Interceptor:** implement `Interceptor.intercept(AgentContext) -> Verdict`
+in any SDK; register with the host.
 
 **Prove conformance:**
 
@@ -71,7 +76,7 @@ pytest --agent-hooks-harness=your_pkg:YourHarness --agent-hooks-level=2
 
 | Level | Name | Proves |
 | --- | --- | --- |
-| 1 | Observing | All applicable hooks fire in spec order with valid L0+L1 context |
+| 1 | Instrumented | All applicable interception points fire in spec order with valid L0+L1 context. Verdicts may be ignored. Adapter-development stage; not a production claim. |
 | 2 | Enforcing | + host honours `deny`, `transform`, `escalate`, `evaluate_only` |
 | 3 | Complete | + L2 fields, `result_labels` propagation, parallel/streaming, stable identity |
 

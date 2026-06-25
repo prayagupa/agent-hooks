@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent_hooks._types import HookError
+from agent_hooks._types import HostError
 from agent_hooks.path import PathError, apply, parse, resolve
 
 
@@ -28,7 +28,7 @@ def test_parse_policy_target_alias() -> None:
 def test_parse_rejects_foreign_root() -> None:
     with pytest.raises(PathError) as ei:
         parse("$snapshot.x")
-    assert ei.value.hook_error is HookError.TRANSFORM_TARGET_FORBIDDEN
+    assert ei.value.host_error is HostError.TRANSFORM_TARGET_FORBIDDEN
 
 
 def test_resolve_and_apply() -> None:
@@ -45,4 +45,4 @@ def test_apply_root_replacement() -> None:
 def test_apply_unresolvable() -> None:
     with pytest.raises(PathError) as ei:
         apply({"a": 1}, "$target.missing.deeper", 0)
-    assert ei.value.hook_error is HookError.TRANSFORM_INVALID
+    assert ei.value.host_error is HostError.TRANSFORM_INVALID

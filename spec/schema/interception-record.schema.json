@@ -1,13 +1,13 @@
 {
-  "$id": "https://agent-hooks.responsibleai.dev/v0.1/hook-result.schema.json",
+  "$id": "https://agent-hooks.responsibleai.dev/v0.1/interception-record.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Agent Hooks — hook result",
+  "title": "Agent Hooks — interception record",
   "description": "Host-side record of a hook evaluation (AGENT-HOOKS-0.1 §6, §10). Returned by an emitter to the host's audit/telemetry layer.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["hook_point", "mode", "verdict", "input_identity", "enforced_identity"],
+  "required": ["interception_point", "mode", "verdict", "input_identity", "enforced_identity"],
   "properties": {
-    "hook_point": { "$ref": "hook-point.schema.json" },
+    "interception_point": { "$ref": "interception-point.schema.json" },
     "mode": { "type": "string", "enum": ["enforce", "evaluate_only"] },
     "verdict": { "$ref": "verdict.schema.json" },
     "transformed_target": {

@@ -2,7 +2,7 @@
   "$id": "https://agent-hooks.responsibleai.dev/v0.1/verdict.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Agent Hooks — verdict",
-  "description": "Consumer return value (AGENT-HOOKS-0.1 §5). Extracted from ACS verdict.schema.json; replaces $policy_target with $target (alias accepted) and reserves hook_error:* for host-synthesized reasons.",
+  "description": "Interceptor return value (AGENT-HOOKS-0.1 §5). Extracted from ACS verdict.schema.json; replaces $policy_target with $target (alias accepted) and reserves host_error:* for host-synthesized reasons.",
   "type": "object",
   "additionalProperties": false,
   "required": ["decision"],
@@ -13,8 +13,8 @@
     },
     "reason": {
       "type": ["string", "null"],
-      "pattern": "^(?!hook_error:).*",
-      "description": "Consumer-supplied machine identifier. The hook_error: prefix is reserved for host-synthesized failures (§11)."
+      "pattern": "^(?!host_error:).*",
+      "description": "Interceptor-supplied machine identifier. The host_error: prefix is reserved for host-synthesized failures (§11)."
     },
     "message": {
       "type": ["string", "null"],
@@ -29,7 +29,7 @@
     "result_labels": {
       "type": ["array", "null"],
       "items": { "type": "string" },
-      "description": "Consumer-supplied labels the host MUST persist with the produced data and resurface on later hooks (§5.4)."
+      "description": "Interceptor-supplied labels the host MUST persist with the produced data and resurface on later interception points (§5.4)."
     }
   },
   "allOf": [

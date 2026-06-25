@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "agent-hooks"
 version = "0.1.0a1"
-description = "Framework-neutral agent lifecycle hook contract: hook points, context, verdict, and conformance test kit."
+description = "Framework-neutral agent lifecycle hook contract: interception points, context, verdict, and conformance test kit."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }

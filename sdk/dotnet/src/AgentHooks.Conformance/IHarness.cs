@@ -37,7 +37,7 @@ public interface IHarness
 
     void Setup(
         Scenario scenario,
-        IHookConsumer consumer,
+        IInterceptor interceptor,
         IApprovalResolver? resolver,
         EnforcementMode mode);
 

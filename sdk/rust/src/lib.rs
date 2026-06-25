@@ -17,5 +17,5 @@ pub mod ctk;
 pub use canonical::{canonical_json, context_identity};
 pub use types::{
     ApprovalOutcome, ApprovalRequest, ApprovalResolution, Decision, EnforcementMode, Evidence,
-    HookConsumer, HookContext, HookError, HookPoint, HookResult, Transform, Verdict, SPEC_VERSION,
+    Interceptor, AgentContext, HostError, InterceptionPoint, InterceptionRecord, Transform, Verdict, SPEC_VERSION,
 };

@@ -4,11 +4,11 @@
 > **Editors:** Responsible AI / Agent Governance Toolkit
 >
 > This document defines a framework-neutral contract for **lifecycle hooks** in
-> AI agent systems: a fixed set of hook points, the context payload a host
-> framework supplies at each point, the verdict a hook consumer returns, and
+> AI agent systems: a fixed set of interception points, the context payload a host
+> framework supplies at each point, the verdict an interceptor returns, and
 > the obligations a host MUST honour for each verdict. It is extracted from and
 > supersedes §4, §13, §14, §17, and §18 of the Agent Control Specification
-> v0.3.1-beta, which becomes one conformant consumer of this contract.
+> v0.3.1-beta, which becomes one conformant interceptor of this contract.
 
 ---
 
@@ -16,11 +16,11 @@
 
 1. [Introduction](#1-introduction)
 2. [Terminology](#2-terminology)
-3. [Hook points](#3-hook-points)
-4. [Hook context](#4-hook-context)
+3. [Interception points](#3-interception-points)
+4. [Agent context](#4-agent-context)
 5. [Verdict](#5-verdict)
 6. [Host obligations](#6-host-obligations)
-7. [Consumer contract](#7-consumer-contract)
+7. [Interceptor contract](#7-interceptor-contract)
 8. [Enforcement mode](#8-enforcement-mode)
 9. [Approval seam](#9-approval-seam)
 10. [Canonical serialization and action identity](#10-canonical-serialization-and-action-identity)
@@ -38,23 +38,29 @@
 
 [Pure Specification]
 
-This specification defines the bidirectional wire contract between a **host**
-(an agent framework or runtime that executes an agent loop) and a **consumer**
-(any component that observes or controls the agent at well-defined lifecycle
-points). It defines:
+This specification defines the bidirectional control contract between a
+**host** (an agent framework or runtime that executes an agent loop) and an
+**interceptor** (a component that controls the agent at well-defined
+lifecycle points by returning a verdict the host MUST act on). It defines:
 
-- the closed set of **hook points** at which a host MUST invoke registered
-  consumers,
-- the **`HookContext`** JSON payload a host MUST construct at each hook point,
-- the **`Verdict`** JSON payload a consumer MUST return,
+- the closed set of **interception points** at which a host MUST invoke registered
+  interceptors,
+- the **`AgentContext`** JSON payload a host MUST construct at each interception point,
+- the **`Verdict`** JSON payload an interceptor MUST return,
 - the **obligations** a host MUST honour for each verdict decision,
 - a tiered **conformance** model and a language-agnostic **Conformance Test
   Kit** (CTK).
 
-This specification does NOT define how a consumer computes a verdict. Policy
-languages, manifests, dispatchers, annotators, and information-flow lattices
-are out of scope and are defined by consumer specifications such as the Agent
-Control Specification (ACS).
+This specification does NOT define how an interceptor computes a verdict.
+Policy languages, manifests, dispatchers, annotators, and information-flow
+lattices are out of scope and are defined by interceptor specifications such
+as the Agent Control Specification (ACS).
+
+This specification is a control plane, not a telemetry plane. It does NOT
+define a passive observation, tracing, or metrics interface. Every
+registered interceptor MUST return a `Verdict`; an interceptor that has no
+control decision to make returns `allow`. A host MAY surface `AgentContext`
+to its own telemetry, but that is outside this contract.
 
 ### 1.2 Key words
 
@@ -67,14 +73,14 @@ capitals.
 
 [Pure Specification]
 
-- **Determinism.** Given the same `HookContext` and the same consumer state, a
-  consumer SHOULD return the same `Verdict`. A host MUST NOT depend on
+- **Determinism.** Given the same `AgentContext` and the same interceptor state, a
+  interceptor SHOULD return the same `Verdict`. A host MUST NOT depend on
   non-determinism for correctness.
-- **Fail closed.** A host that cannot construct a valid `HookContext`, cannot
-  reach a registered consumer, or receives an invalid `Verdict` MUST treat the
-  outcome as `deny` with a `hook_error:*` reason per §11.
+- **Fail closed.** A host that cannot construct a valid `AgentContext`, cannot
+  reach a registered interceptor, or receives an invalid `Verdict` MUST treat the
+  outcome as `deny` with a `host_error:*` reason per §11.
 - **No silent bypass.** A host MUST NOT execute the action guarded by a hook
-  point without first invoking every registered controlling consumer for that
+  point without first invoking every registered controlling interceptor for that
   point and honouring the resulting verdict per §6.
 
 ---
@@ -83,27 +89,27 @@ capitals.
 
 | Term | Definition |
 | --- | --- |
-| **Host** | An agent framework, SDK, or runtime that executes an agent loop and emits hooks. |
-| **Consumer** | A component registered with the host that receives a `HookContext` and returns a `Verdict`. |
-| **Hook point** | One of the eight named lifecycle positions in §3. |
-| **Hook context** | The JSON payload the host constructs at a hook point per §4. |
-| **Target** | The JSON value within the hook context that the guarded action will consume or has produced. The value a `transform` verdict rewrites. |
-| **Verdict** | The JSON payload a consumer returns per §5. |
-| **Action** | The host operation immediately following a `pre_*` hook or immediately preceding a `post_*` hook (a model call, a tool invocation, emitting output). |
+| **Host** | An agent framework, SDK, or runtime that executes an agent loop and dispatches to interceptors at each interception point. |
+| **Interceptor** | A component registered with the host that receives an `AgentContext` and returns a `Verdict`. |
+| **Interception point** | One of the eight named lifecycle positions in §3. |
+| **Agent context** | The JSON payload the host constructs at an interception point per §4. |
+| **Target** | The JSON value within the agent context that the guarded action will consume or has produced. The value a `transform` verdict rewrites. |
+| **Verdict** | The JSON payload an interceptor returns per §5. |
+| **Action** | The host operation immediately following a `pre_*` interception point or immediately preceding a `post_*` interception point (a model call, a tool invocation, emitting output). |
 | **Permit verdict** | A verdict whose `decision` is `allow`, `warn`, or `transform`. |
 | **Block verdict** | A verdict whose `decision` is `deny` or `escalate`. |
 | **CTK** | The Conformance Test Kit defined in §13 and shipped under `conformance/`. |
 
 ---
 
-## 3. Hook points
+## 3. Interception points
 
 [Pure Specification]
 
-A host MUST emit the following eight hook points. The set is closed; a host
-MUST NOT emit a `HookContext` whose `hook_point` is not one of these values.
+A host MUST emit the following eight interception points. The set is closed; a host
+MUST NOT emit an `AgentContext` whose `interception_point` is not one of these values.
 
-| `hook_point` | Position in the agent loop | Target (§4.3) | `transform` permitted |
+| `interception_point` | Position in the agent loop | Target (§4.3) | `transform` permitted |
 | --- | --- | --- | --- |
 | `agent_startup` | Once, before the first `input` of a session. | `agent_init` | no |
 | `input` | On ingress of each external request into the session. | `input` | yes |
@@ -118,17 +124,17 @@ MUST NOT emit a `HookContext` whose `hook_point` is not one of these values.
 
 [Pure Specification]
 
-Within a single session a host MUST emit hook points such that:
+Within a single session a host MUST emit interception points such that:
 
-1. `agent_startup` precedes every other hook point.
-2. `agent_shutdown` follows every other hook point.
+1. `agent_startup` precedes every other interception point.
+2. `agent_shutdown` follows every other interception point.
 3. Each `input` precedes the `pre_model_call`, `pre_tool_call`, and `output`
    hooks that result from it.
 4. Each `pre_model_call` is followed by exactly one `post_model_call` for the
    same `request_id` unless the model call is blocked per §6.
 5. Each `pre_tool_call` is followed by exactly one `post_tool_call` for the
    same `tool_call.id` unless the tool call is blocked per §6.
-6. `sequence` (§4.1) is strictly increasing across all hook points in a
+6. `sequence` (§4.1) is strictly increasing across all interception points in a
    session.
 
 A host that supports multi-turn sessions MAY emit multiple
@@ -147,26 +153,26 @@ capabilities to the CTK per §13.2 and MUST still emit `agent_startup`, `input`,
 
 ---
 
-## 4. Hook context
+## 4. Agent context
 
 [Pure Specification]
 
-A `HookContext` is a JSON object. Its schema is tiered:
+A `AgentContext` is a JSON object. Its schema is tiered:
 
-- **L0** fields are REQUIRED at every hook point.
-- **L1** fields are REQUIRED at the specific hook point(s) listed.
+- **L0** fields are REQUIRED at every interception point.
+- **L1** fields are REQUIRED at the specific interception point(s) listed.
 - **L2** fields are well-known and OPTIONAL.
 - **L3** fields are namespaced extensions under `extensions.<namespace>`.
 
-The machine-readable schema is `spec/schema/hook-context.schema.json` with
-per-point closed schemas at `spec/schema/hook-context/<hook_point>.schema.json`.
+The machine-readable schema is `spec/schema/agent-context.schema.json` with
+per-point closed schemas at `spec/schema/agent-context/<interception_point>.schema.json`.
 
 ### 4.1 L0 — required core
 
 ```jsonc
 {
   "spec": "agent-hooks/0.1",
-  "hook_point": "<one of §3>",
+  "interception_point": "<one of §3>",
   "timestamp": "2026-06-19T14:03:11.123Z",
   "sequence": 0,
   "agent":   { "id": "string", "framework": "string" },
@@ -178,7 +184,7 @@ per-point closed schemas at `spec/schema/hook-context/<hook_point>.schema.json`.
 | Field | Type | Constraint |
 | --- | --- | --- |
 | `spec` | string | MUST match `^agent-hooks/\d+\.\d+$`. Identifies the spec version the host targets. |
-| `hook_point` | string | MUST be one of the eight values in §3. |
+| `interception_point` | string | MUST be one of the eight values in §3. |
 | `timestamp` | string | RFC 3339 UTC instant at which the host constructed the context. |
 | `sequence` | integer ≥ 0 | MUST be strictly increasing within `session.id`. Starts at 0 on `agent_startup`. |
 | `agent.id` | string | Stable identifier for the agent definition. MUST be stable across sessions of the same agent. |
@@ -186,9 +192,9 @@ per-point closed schemas at `spec/schema/hook-context/<hook_point>.schema.json`.
 | `session.id` | string | Stable identifier for the run/conversation. MUST be stable across all hooks in one session. |
 | `target` | any | The value-under-evaluation per §4.3. The root that `$target` in a `transform.path` resolves against. |
 
-### 4.2 L1 — per-hook-point required fields
+### 4.2 L1 — per-interception-point required fields
 
-A host MUST populate the following fields at the indicated hook point in
+A host MUST populate the following fields at the indicated interception point in
 addition to L0. `target` MUST be set to the indicated value.
 
 #### `agent_startup`
@@ -294,14 +300,14 @@ reference (or deep copy followed by write-back) of the value indicated in the
 subsequent action.
 
 A `transform` verdict at `agent_startup` or `agent_shutdown` MUST be rejected
-by the host with `hook_error:transform_target_forbidden` per §11.
+by the host with `host_error:transform_target_forbidden` per §11.
 
 ### 4.4 L2 — well-known optional fields
 
 A host SHOULD populate the following fields when the underlying framework
 exposes the data. Absence is conformant.
 
-| Field | Hook point(s) | Type |
+| Field | Interception point(s) | Type |
 | --- | --- | --- |
 | `agent.name`, `agent.version` | all | string |
 | `session.started_at` | all | RFC 3339 |
@@ -330,7 +336,7 @@ exposes the data. Absence is conformant.
 
 `<namespace>` MUST match `^[a-z][a-z0-9_]*$`. The namespaces `acs`, `ctk`, and
 `agent_hooks` are reserved by this specification. A host MUST pass `extensions`
-through to consumers verbatim and MUST NOT interpret namespaces it does not
+through to interceptors verbatim and MUST NOT interpret namespaces it does not
 own.
 
 ---
@@ -339,7 +345,7 @@ own.
 
 [Pure Specification]
 
-A consumer MUST return a JSON object conforming to
+An interceptor MUST return a JSON object conforming to
 `spec/schema/verdict.schema.json`.
 
 ```jsonc
@@ -356,17 +362,17 @@ A consumer MUST return a JSON object conforming to
 | Member | Required | Constraint |
 | --- | --- | --- |
 | `decision` | yes | One of the five values above. |
-| `reason` | no | MUST NOT start with `hook_error:`. Free-form machine identifier. |
+| `reason` | no | MUST NOT start with `host_error:`. Free-form machine identifier. |
 | `message` | no | Free-form human-readable text. |
 | `transform` | iff `decision == "transform"` | See §5.2. MUST be absent for all other decisions. |
 | `evidence` | no | See §5.3. Serialized size MUST NOT exceed 4096 bytes. |
 | `result_labels` | no | Array of strings. See §5.4. |
 
 A host that receives a verdict that is not a JSON object, whose `decision` is
-absent or invalid, whose `reason` starts with `hook_error:`, whose `transform`
+absent or invalid, whose `reason` starts with `host_error:`, whose `transform`
 presence violates the constraint above, whose `evidence` is not an object, or
 whose `result_labels` is not an array of strings MUST treat it as
-`{"decision": "deny", "reason": "hook_error:verdict_invalid"}`.
+`{"decision": "deny", "reason": "host_error:verdict_invalid"}`.
 
 ### 5.1 Decision semantics
 
@@ -393,24 +399,24 @@ whose `result_labels` is not an array of strings MUST treat it as
 - `value` is any JSON value, including `null`.
 - A host MUST resolve `path` against the context's `target` value and replace
   the addressed location with `value`. The replacement MUST NOT modify any
-  other part of the `HookContext`.
+  other part of the `AgentContext`.
 - A `path` rooted elsewhere than `$target`/`$policy_target` MUST yield
-  `hook_error:transform_target_forbidden`.
+  `host_error:transform_target_forbidden`.
 - A `path` that does not resolve, or whose segment types are incompatible with
-  `target`'s structure, MUST yield `hook_error:transform_invalid`.
+  `target`'s structure, MUST yield `host_error:transform_invalid`.
 
 ### 5.3 Evidence
 
 `evidence` is an opaque pointer to an offline-verifiable artefact supporting
 the verdict. A host MUST NOT dereference `verification_pointers`. A host MUST
-propagate `evidence` to its audit/telemetry sink unchanged when present.
+propagate `evidence` to its audit sink unchanged when present.
 
 ### 5.4 Result labels
 
-`result_labels` is the consumer's return channel for label-flow tracking. A
-host MUST persist `result_labels` alongside the data the hook's `target`
+`result_labels` is the interceptor's return channel for label-flow tracking. A
+host MUST persist `result_labels` alongside the data the interception point's `target`
 produced (a tool result, a model output, a final output) and SHOULD resurface
-them as `extensions.<consumer-namespace>.source_labels` on later hooks whose
+them as `extensions.<interceptor-namespace>.source_labels` on later hooks whose
 `target` derives from that data. A host MUST NOT persist `result_labels` for an
 action that did not proceed (a `deny`, or an `escalate` not approved).
 
@@ -420,7 +426,7 @@ action that did not proceed (a `deny`, or an `escalate` not approved).
 
 [Pure Specification]
 
-For each hook point, after obtaining a verdict in `enforce` mode (§8):
+For each interception point, after obtaining a verdict in `enforce` mode (§8):
 
 | Verdict | Host MUST |
 | --- | --- |
@@ -430,7 +436,7 @@ For each hook point, after obtaining a verdict in `enforce` mode (§8):
 | `deny` | NOT proceed with the action. At `pre_*` hooks the guarded call MUST NOT be dispatched. At `input` the turn MUST NOT begin. At `output` the response MUST NOT be returned to the caller. |
 | `escalate` | NOT proceed with the action until the approval seam (§9) returns a permit verdict. If approval returns `deny`, treat as `deny`. |
 
-### 6.1 Post-hook block semantics
+### 6.1 Post-action block semantics
 
 At `post_model_call` and `post_tool_call` the action has already executed. A
 `deny` or unresolved `escalate` at these points means the host MUST NOT
@@ -440,49 +446,49 @@ re-execute the action.
 
 ### 6.2 Block propagation
 
-When a `pre_*` hook yields a block verdict, the host MUST NOT emit the
-corresponding `post_*` hook for that action. The host MUST continue the agent
+When a `pre_*` interception point yields a block verdict, the host MUST NOT emit the
+corresponding `post_*` interception point for that action. The host MUST continue the agent
 loop as if the action had failed (e.g., surface a tool error to the model)
 unless the host's own semantics terminate the turn.
 
 ### 6.3 Failure handling
 
-A host that fails to construct a valid `HookContext` for a hook point MUST
-treat the verdict as `{"decision": "deny", "reason": "hook_error:context_invalid"}`.
-A host whose registered consumer raises, times out, or returns a non-conformant
-value MUST treat the verdict as `deny` with `hook_error:consumer_failed` or
-`hook_error:consumer_timeout` respectively.
+A host that fails to construct a valid `AgentContext` for an interception point MUST
+treat the verdict as `{"decision": "deny", "reason": "host_error:context_invalid"}`.
+A host whose registered interceptor raises, times out, or returns a non-conformant
+value MUST treat the verdict as `deny` with `host_error:interceptor_failed` or
+`host_error:interceptor_timeout` respectively.
 
 ---
 
-## 7. Consumer contract
+## 7. Interceptor contract
 
 [Pure Specification]
 
-A consumer is a callable `on_hook(context: HookContext) -> Verdict`. A host:
+An interceptor is a callable `intercept(context: AgentContext) -> Verdict`. A host:
 
-- MUST invoke each registered consumer synchronously with respect to the
-  guarded action (the action MUST NOT begin until all consumers have returned).
-- SHOULD bound consumer execution with a configurable timeout (RECOMMENDED
+- MUST invoke each registered interceptor synchronously with respect to the
+  guarded action (the action MUST NOT begin until all interceptors have returned).
+- SHOULD bound interceptor execution with a configurable timeout (RECOMMENDED
   default: 5000 ms) and apply §6.3 on breach.
-- MAY invoke consumers asynchronously with respect to each other.
+- MAY invoke interceptors asynchronously with respect to each other.
 
-### 7.1 Multiple consumers
+### 7.1 Multiple interceptors
 
 [Default Implementation]
 
-A host MAY register more than one consumer. When it does, the host MUST
+A host MAY register more than one interceptor. When it does, the host MUST
 combine verdicts deterministically:
 
-1. Invoke consumers in registration order.
+1. Invoke interceptors in registration order.
 2. The combined verdict is the first block verdict (`deny` or `escalate`) in
-   order; remaining consumers are NOT invoked.
-3. If no consumer returns a block verdict, the combined verdict is the last
+   order; remaining interceptors are NOT invoked.
+3. If no interceptor returns a block verdict, the combined verdict is the last
    `transform` in order (later transforms see earlier transforms' effect on
-   `target`); otherwise `warn` if any consumer returned `warn`; otherwise
+   `target`); otherwise `warn` if any interceptor returned `warn`; otherwise
    `allow`.
 
-A host that registers exactly one controlling consumer trivially satisfies
+A host that registers exactly one controlling interceptor trivially satisfies
 this section.
 
 ---
@@ -491,12 +497,12 @@ this section.
 
 [Pure Specification]
 
-A host MUST support two modes, selected per session or per hook:
+A host MUST support two modes, selected per session or per interception point:
 
 | Mode | Behaviour |
 | --- | --- |
 | `enforce` | The host honours verdicts per §6. |
-| `evaluate_only` | The host invokes consumers and records verdicts but proceeds with every action as if the verdict were `allow`. The host MUST validate `transform` per §5.2 but MUST NOT apply it. The host MUST NOT present an `evaluate_only` outcome as enforcement to any downstream system. |
+| `evaluate_only` | The host invokes interceptors and records verdicts but proceeds with every action as if the verdict were `allow`. The host MUST validate `transform` per §5.2 but MUST NOT apply it. The host MUST NOT present an `evaluate_only` outcome as enforcement to any downstream system. |
 
 ---
 
@@ -511,9 +517,9 @@ When a verdict is `escalate`, the host MUST consult a registered
 // ApprovalRequest
 {
   "context_identity": "sha256:<hex>",     // §10
-  "hook_point": "<§3>",
+  "interception_point": "<§3>",
   "verdict": <the escalate Verdict>,
-  "context": <the HookContext>            // MAY be redacted per host policy
+  "context": <the AgentContext>            // MAY be redacted per host policy
 }
 
 // ApprovalResolution
@@ -528,11 +534,11 @@ When a verdict is `escalate`, the host MUST consult a registered
   host applies §6 to that verdict.
 - `reject` MUST carry `{"decision": "deny", ...}`. The host applies §6.
 - `unresolved` means the resolver could not decide. The host MUST treat it as
-  `deny` with `hook_error:approval_unresolved`.
+  `deny` with `host_error:approval_unresolved`.
 - A resolution whose `context_identity` differs from the request's MUST be
-  rejected with `hook_error:approval_action_mismatch`.
+  rejected with `host_error:approval_action_mismatch`.
 - A host with no registered resolver MUST treat `escalate` as `deny` with
-  `hook_error:approval_resolver_missing`.
+  `host_error:approval_resolver_missing`.
 
 ---
 
@@ -542,7 +548,7 @@ When a verdict is `escalate`, the host MUST consult a registered
 
 ### 10.1 Canonical JSON
 
-A host MUST be able to serialize a `HookContext` to canonical JSON:
+A host MUST be able to serialize an `AgentContext` to canonical JSON:
 
 1. Object members emitted in lexicographic order of UTF-8 byte sequence of the
    member name.
@@ -556,11 +562,11 @@ A host MUST be able to serialize a `HookContext` to canonical JSON:
 where `ctx_L01` is `ctx` with all members not in L0 or L1 removed (i.e., L2
 fields, `extensions`, and unknown members are excluded).
 
-A host MUST compute two identities per hook:
+A host MUST compute two identities per interception:
 
 | Identity | Definition |
 | --- | --- |
-| `input_identity` | `context_identity(ctx)` as supplied to the consumer. |
+| `input_identity` | `context_identity(ctx)` as supplied to the interceptor. |
 | `enforced_identity` | `context_identity(ctx')` where `ctx'` is `ctx` with `target` replaced by the post-`transform` value. Equal to `input_identity` for non-`transform` verdicts and in `evaluate_only` mode. |
 
 Approval binding (§9) uses `enforced_identity`.
@@ -572,23 +578,23 @@ Approval binding (§9) uses `enforced_identity`.
 [Pure Specification]
 
 A host MUST use the following `reason` values, and only these, when it
-synthesizes a `deny` verdict per §6.3, §5.2, or §9. A consumer MUST NOT emit a
-`reason` beginning with `hook_error:`.
+synthesizes a `deny` verdict per §6.3, §5.2, or §9. An interceptor MUST NOT emit a
+`reason` beginning with `host_error:`.
 
 | Reason | Cause |
 | --- | --- |
-| `hook_error:context_invalid` | The host could not construct a schema-valid `HookContext`. |
-| `hook_error:consumer_failed` | A consumer raised or returned a non-JSON value. |
-| `hook_error:consumer_timeout` | A consumer exceeded the host's timeout. |
-| `hook_error:verdict_invalid` | A consumer returned a value that fails §5 validation. |
-| `hook_error:transform_invalid` | `transform.path` did not resolve or `value` could not be set. |
-| `hook_error:transform_target_forbidden` | `transform.path` is not rooted at `$target`, or the hook point forbids transform. |
-| `hook_error:approval_resolver_missing` | `escalate` with no registered resolver. |
-| `hook_error:approval_resolver_failed` | The resolver raised or timed out. |
-| `hook_error:approval_unresolved` | The resolver returned `unresolved`. |
-| `hook_error:approval_action_mismatch` | The resolver's `context_identity` did not match. |
-| `hook_error:adapter_unsupported` | The host adapter cannot emit this hook point. |
-| `hook_error:streaming_unsupported` | The host cannot satisfy §12 for a streaming response. |
+| `host_error:context_invalid` | The host could not construct a schema-valid `AgentContext`. |
+| `host_error:interceptor_failed` | An interceptor raised or returned a non-JSON value. |
+| `host_error:interceptor_timeout` | An interceptor exceeded the host's timeout. |
+| `host_error:verdict_invalid` | An interceptor returned a value that fails §5 validation. |
+| `host_error:transform_invalid` | `transform.path` did not resolve or `value` could not be set. |
+| `host_error:transform_target_forbidden` | `transform.path` is not rooted at `$target`, or the interception point forbids transform. |
+| `host_error:approval_resolver_missing` | `escalate` with no registered resolver. |
+| `host_error:approval_resolver_failed` | The resolver raised or timed out. |
+| `host_error:approval_unresolved` | The resolver returned `unresolved`. |
+| `host_error:approval_action_mismatch` | The resolver's `context_identity` did not match. |
+| `host_error:adapter_unsupported` | The host adapter cannot emit this interception point. |
+| `host_error:streaming_unsupported` | The host cannot satisfy §12 for a streaming response. |
 
 The machine-readable inventory is `spec/reserved-reasons.json`.
 
@@ -603,7 +609,7 @@ The machine-readable inventory is `spec/reserved-reasons.json`.
 A host that streams model output MUST assemble the complete response before
 emitting `post_model_call`. A host that cannot assemble MUST emit
 `post_model_call` with `response.finish_reason: "stream_incomplete"` and a
-`deny` self-verdict with `hook_error:streaming_unsupported`, and MUST NOT
+`deny` self-verdict with `host_error:streaming_unsupported`, and MUST NOT
 incorporate the partial response.
 
 ### 12.2 Parallel tool calls
@@ -621,7 +627,7 @@ remain strictly increasing across the interleaving.
 
 | Level | Name | Requirement |
 | --- | --- | --- |
-| **1** | Observing | Host emits all hook points applicable to its declared capabilities, in the order of §3.1, with `HookContext` valid against the per-point L0+L1 schema. Verdicts MAY be ignored. |
+| **1** | Instrumented | Host emits all interception points applicable to its declared capabilities, in the order of §3.1, with `AgentContext` valid against the per-point L0+L1 schema. Verdicts MAY be ignored. |
 | **2** | Enforcing | Level 1, AND host honours `deny`, `transform`, and `escalate` per §6 and §9, AND `evaluate_only` per §8. |
 | **3** | Complete | Level 2, AND host populates all L2 fields it has data for, persists and resurfaces `result_labels` per §5.4, satisfies §12, AND `context_identity` is stable across runs given identical inputs. |
 
@@ -649,15 +655,15 @@ recorded in `conformance/CLAIMS.md`.
 
 ## 14. Security considerations
 
-- A consumer receives the full `target`, which may contain user PII, secrets in
+- An interceptor receives the full `target`, which may contain user PII, secrets in
   tool arguments, or model output. Hosts SHOULD redact known-sensitive fields
-  before constructing `HookContext` when the consumer's trust level does not
+  before constructing `AgentContext` when the interceptor's trust level does not
   warrant raw access, and MUST document any redaction in
   `extensions.<host>.redacted: ["<jsonpath>", ...]`.
 - `evidence.verification_pointers` are URIs a host MUST NOT dereference
   automatically; doing so is an SSRF vector.
 - A `transform` verdict rewrites data the agent will act on. Hosts SHOULD
-  authenticate consumers and SHOULD log every applied transform with both
+  authenticate interceptors and SHOULD log every applied transform with both
   `input_identity` and `enforced_identity`.
 - `evaluate_only` mode MUST NOT be presented to downstream systems as
   enforcement; doing so is a compliance hazard.

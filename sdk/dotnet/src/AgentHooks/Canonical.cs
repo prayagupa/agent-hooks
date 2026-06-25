@@ -13,7 +13,7 @@ namespace AgentHooks;
 public static class Canonical
 {
     private static readonly HashSet<string> L0 =
-        ["spec", "hook_point", "timestamp", "sequence", "agent", "session", "target"];
+        ["spec", "interception_point", "timestamp", "sequence", "agent", "session", "target"];
     private static readonly HashSet<string> L0Agent = ["id", "framework"];
     private static readonly HashSet<string> L0Session = ["id"];
 
@@ -39,7 +39,7 @@ public static class Canonical
     }
 
     /// <summary><c>"sha256:" + hex(SHA-256(Json(ctx_L01)))</c> (§10.2).</summary>
-    public static string ContextIdentity(HookContext ctx)
+    public static string ContextIdentity(AgentContext ctx)
     {
         var stripped = StripToL01(ctx);
         var bytes = Encoding.UTF8.GetBytes(Json(stripped));
@@ -102,9 +102,9 @@ public static class Canonical
         sb.Append(d == Math.Truncate(d) && !s.Contains('E') ? ((long)d).ToString(CultureInfo.InvariantCulture) : s);
     }
 
-    private static JsonObject StripToL01(HookContext ctx)
+    private static JsonObject StripToL01(AgentContext ctx)
     {
-        var hp = (string)ctx.Json["hook_point"]!;
+        var hp = (string)ctx.Json["interception_point"]!;
         var l1 = L1.TryGetValue(hp, out var x) ? new HashSet<string>(x) : [];
         var outObj = new JsonObject();
         foreach (var (k, v) in ctx.Json)
