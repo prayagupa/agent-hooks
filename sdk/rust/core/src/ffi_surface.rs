@@ -16,7 +16,6 @@ use crate::{
     canonical, enforce as enforce_step, path, types::EnforcementMode, verdict, AgentContext,
     HostError, Verdict,
 };
-#[allow(unused_imports)]
 use serde_json::Value;
 
 /// `(host_error_code, detail_message)`
@@ -103,4 +102,56 @@ pub fn enforce(ctx_json: &str, verdict_json: &str, mode: &str) -> Result<String,
 /// Version stamp for binding sanity checks.
 pub fn spec_version() -> &'static str {
     crate::SPEC_VERSION
+}
+
+// ---- CTK engine (§13.2) ----------------------------------------------------
+
+/// Evaluate a vector's `interceptor_script` against `ctx`. Returns the
+/// verdict JSON the scripted interceptor produced.
+pub fn ctk_scripted_intercept(rules_json: &str, ctx_json: &str) -> Result<String, FfiError> {
+    let rules: Vec<Value> = serde_json::from_str(rules_json)
+        .map_err(|e| err(HostError::ContextInvalid, format!("rules: {e}")))?;
+    let ctx = parse_json(ctx_json, "ctx")?;
+    let out = crate::ctk_engine::scripted_intercept(&rules, &ctx);
+    Ok(serde_json::to_string(&out).expect("verdict serialize"))
+}
+
+/// Evaluate a vector's `approval_script` against the request context.
+/// Returns `{outcome, context_identity, verdict?}` echoing `identity`.
+pub fn ctk_scripted_resolve(
+    rules_json: &str,
+    ctx_json: &str,
+    identity: &str,
+) -> Result<String, FfiError> {
+    let rules: Vec<Value> = serde_json::from_str(rules_json)
+        .map_err(|e| err(HostError::ContextInvalid, format!("rules: {e}")))?;
+    let ctx = parse_json(ctx_json, "ctx")?;
+    let out = crate::ctk_engine::scripted_resolve(&rules, &ctx, identity);
+    Ok(serde_json::to_string(&out).expect("resolution serialize"))
+}
+
+/// Determine whether a vector should be skipped for a harness. Returns
+/// `null` (no skip) or a detail string.
+pub fn ctk_should_skip(vector_json: &str, harness_caps_json: &str) -> Result<String, FfiError> {
+    let vector = parse_json(vector_json, "vector")?;
+    let caps: Vec<String> = serde_json::from_str(harness_caps_json)
+        .map_err(|e| err(HostError::ContextInvalid, format!("caps: {e}")))?;
+    let caps_ref: Vec<&str> = caps.iter().map(String::as_str).collect();
+    let out = crate::ctk_engine::should_skip(&vector, &caps_ref);
+    Ok(serde_json::to_string(&out).expect("skip serialize"))
+}
+
+/// Run the assertion pass for one vector. Returns `VectorResult` JSON.
+pub fn ctk_assert(
+    vector_json: &str,
+    recorded_json: &str,
+    run_record_json: &str,
+) -> Result<String, FfiError> {
+    let vector = parse_json(vector_json, "vector")?;
+    let recorded: Vec<Value> = serde_json::from_str(recorded_json)
+        .map_err(|e| err(HostError::ContextInvalid, format!("recorded: {e}")))?;
+    let rr: crate::ctk_engine::RunRecord = serde_json::from_str(run_record_json)
+        .map_err(|e| err(HostError::ContextInvalid, format!("run_record: {e}")))?;
+    let out = crate::ctk_engine::assert_vector(&vector, &recorded, &rr);
+    Ok(serde_json::to_string(&out).expect("result serialize"))
 }

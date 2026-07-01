@@ -10,3 +10,7 @@ export declare function validateVerdict(verdictJson: string): string
 export declare function applyTransform(targetJson: string, path: string, valueJson: string): string
 export declare function combineVerdicts(verdictsJson: string): string
 export declare function enforce(ctxJson: string, verdictJson: string, mode: string): string
+export declare function ctkScriptedIntercept(rulesJson: string, ctxJson: string): string
+export declare function ctkScriptedResolve(rulesJson: string, ctxJson: string, identity: string): string
+export declare function ctkShouldSkip(vectorJson: string, harnessCapsJson: string): string
+export declare function ctkAssert(vectorJson: string, recordedJson: string, runRecordJson: string): string

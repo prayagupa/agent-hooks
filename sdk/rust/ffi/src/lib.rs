@@ -145,3 +145,61 @@ pub unsafe extern "C" fn ah_enforce(
         from_c(mode),
     ))
 }
+
+// ---- CTK engine (§13.2) ----------------------------------------------------
+
+/// # Safety
+/// All pointers must be valid NUL-terminated UTF-8 C strings.
+#[no_mangle]
+pub unsafe extern "C" fn ah_ctk_scripted_intercept(
+    rules_json: *const c_char,
+    ctx_json: *const c_char,
+) -> *mut AhResult {
+    boxed(core::ctk_scripted_intercept(
+        from_c(rules_json),
+        from_c(ctx_json),
+    ))
+}
+
+/// # Safety
+/// All pointers must be valid NUL-terminated UTF-8 C strings.
+#[no_mangle]
+pub unsafe extern "C" fn ah_ctk_scripted_resolve(
+    rules_json: *const c_char,
+    ctx_json: *const c_char,
+    identity: *const c_char,
+) -> *mut AhResult {
+    boxed(core::ctk_scripted_resolve(
+        from_c(rules_json),
+        from_c(ctx_json),
+        from_c(identity),
+    ))
+}
+
+/// # Safety
+/// All pointers must be valid NUL-terminated UTF-8 C strings.
+#[no_mangle]
+pub unsafe extern "C" fn ah_ctk_should_skip(
+    vector_json: *const c_char,
+    harness_caps_json: *const c_char,
+) -> *mut AhResult {
+    boxed(core::ctk_should_skip(
+        from_c(vector_json),
+        from_c(harness_caps_json),
+    ))
+}
+
+/// # Safety
+/// All pointers must be valid NUL-terminated UTF-8 C strings.
+#[no_mangle]
+pub unsafe extern "C" fn ah_ctk_assert(
+    vector_json: *const c_char,
+    recorded_json: *const c_char,
+    run_record_json: *const c_char,
+) -> *mut AhResult {
+    boxed(core::ctk_assert(
+        from_c(vector_json),
+        from_c(recorded_json),
+        from_c(run_record_json),
+    ))
+}

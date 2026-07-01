@@ -28,6 +28,7 @@ mod verdict;
 #[cfg(feature = "ctk")]
 pub mod ctk;
 
+pub mod ctk_engine;
 pub mod ffi_surface;
 
 pub use canonical::{canonical_json, context_identity};

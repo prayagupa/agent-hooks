@@ -34,6 +34,17 @@ AhResult *ah_combine_verdicts(const char *verdicts_json);
 AhResult *ah_enforce(const char *ctx_json, const char *verdict_json,
                      const char *mode);
 
+/* CTK engine (spec section 13.2) */
+AhResult *ah_ctk_scripted_intercept(const char *rules_json,
+                                    const char *ctx_json);
+AhResult *ah_ctk_scripted_resolve(const char *rules_json,
+                                  const char *ctx_json,
+                                  const char *identity);
+AhResult *ah_ctk_should_skip(const char *vector_json,
+                             const char *harness_caps_json);
+AhResult *ah_ctk_assert(const char *vector_json, const char *recorded_json,
+                        const char *run_record_json);
+
 #ifdef __cplusplus
 }
 #endif

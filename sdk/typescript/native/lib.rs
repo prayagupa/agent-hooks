@@ -55,3 +55,33 @@ pub fn combine_verdicts(verdicts_json: String) -> Result<String> {
 pub fn enforce(ctx_json: String, verdict_json: String, mode: String) -> Result<String> {
     core::enforce(&ctx_json, &verdict_json, &mode).map_err(map_err)
 }
+
+// ---- CTK engine (§13.2) ---------------------------------------------------
+
+#[napi]
+pub fn ctk_scripted_intercept(rules_json: String, ctx_json: String) -> Result<String> {
+    core::ctk_scripted_intercept(&rules_json, &ctx_json).map_err(map_err)
+}
+
+#[napi]
+pub fn ctk_scripted_resolve(
+    rules_json: String,
+    ctx_json: String,
+    identity: String,
+) -> Result<String> {
+    core::ctk_scripted_resolve(&rules_json, &ctx_json, &identity).map_err(map_err)
+}
+
+#[napi]
+pub fn ctk_should_skip(vector_json: String, harness_caps_json: String) -> Result<String> {
+    core::ctk_should_skip(&vector_json, &harness_caps_json).map_err(map_err)
+}
+
+#[napi]
+pub fn ctk_assert(
+    vector_json: String,
+    recorded_json: String,
+    run_record_json: String,
+) -> Result<String> {
+    core::ctk_assert(&vector_json, &recorded_json, &run_record_json).map_err(map_err)
+}

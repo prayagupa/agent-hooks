@@ -64,6 +64,42 @@ fn enforce(py: Python<'_>, ctx_json: &str, verdict_json: &str, mode: &str) -> Py
     core::enforce(ctx_json, verdict_json, mode).map_err(|e| map_err(py, e))
 }
 
+// ---- CTK engine (§13.2) ---------------------------------------------------
+
+#[pyfunction]
+fn ctk_scripted_intercept(py: Python<'_>, rules_json: &str, ctx_json: &str) -> PyResult<String> {
+    core::ctk_scripted_intercept(rules_json, ctx_json).map_err(|e| map_err(py, e))
+}
+
+#[pyfunction]
+fn ctk_scripted_resolve(
+    py: Python<'_>,
+    rules_json: &str,
+    ctx_json: &str,
+    identity: &str,
+) -> PyResult<String> {
+    core::ctk_scripted_resolve(rules_json, ctx_json, identity).map_err(|e| map_err(py, e))
+}
+
+#[pyfunction]
+fn ctk_should_skip(
+    py: Python<'_>,
+    vector_json: &str,
+    harness_caps_json: &str,
+) -> PyResult<String> {
+    core::ctk_should_skip(vector_json, harness_caps_json).map_err(|e| map_err(py, e))
+}
+
+#[pyfunction]
+fn ctk_assert(
+    py: Python<'_>,
+    vector_json: &str,
+    recorded_json: &str,
+    run_record_json: &str,
+) -> PyResult<String> {
+    core::ctk_assert(vector_json, recorded_json, run_record_json).map_err(|e| map_err(py, e))
+}
+
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("SPEC_VERSION", core::spec_version())?;
@@ -75,5 +111,9 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(apply_transform, m)?)?;
     m.add_function(wrap_pyfunction!(combine_verdicts, m)?)?;
     m.add_function(wrap_pyfunction!(enforce, m)?)?;
+    m.add_function(wrap_pyfunction!(ctk_scripted_intercept, m)?)?;
+    m.add_function(wrap_pyfunction!(ctk_scripted_resolve, m)?)?;
+    m.add_function(wrap_pyfunction!(ctk_should_skip, m)?)?;
+    m.add_function(wrap_pyfunction!(ctk_assert, m)?)?;
     Ok(())
 }
