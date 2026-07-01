@@ -50,11 +50,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-node@v4
         with: { node-version: "22" }
       - run: npm ci
         working-directory: sdk/typescript
-      - run: npx tsc --noEmit
+      - run: npm run build:native:debug
+        working-directory: sdk/typescript
+      - run: npx tsc
+        working-directory: sdk/typescript
+      - run: node --test test/
         working-directory: sdk/typescript
 
   rust:
@@ -72,18 +77,36 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build ffi cdylib
+        run: cargo build -p agent-hooks-ffi --release
+        working-directory: sdk/rust
       - uses: actions/setup-dotnet@v4
         with: { dotnet-version: "8.0.x" }
       - run: dotnet build -warnaserror
         working-directory: sdk/dotnet
+      - name: Test (golden identity)
+        run: dotnet test test/AgentHooks.Tests/ --nologo
+        working-directory: sdk/dotnet
+        env:
+          LD_LIBRARY_PATH: ${{ github.workspace }}/sdk/rust/target/release
 
   go:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build ffi cdylib
+        run: cargo build -p agent-hooks-ffi --release
+        working-directory: sdk/rust
       - uses: actions/setup-go@v5
         with: { go-version: "1.22" }
-      - run: go build ./...
+      - name: Build and test
+        run: |
+          go build ./...
+          go vet ./...
+          go test ./... -v
         working-directory: sdk/go
-      - run: go vet ./...
-        working-directory: sdk/go
+        env:
+          CGO_LDFLAGS: -L${{ github.workspace }}/sdk/rust/target/release -lagent_hooks_ffi
+          LD_LIBRARY_PATH: ${{ github.workspace }}/sdk/rust/target/release

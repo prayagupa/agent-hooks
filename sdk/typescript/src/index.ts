@@ -6,7 +6,8 @@
  * `policy-engine/sdk/node/src/index.ts`.
  */
 
-import { createHash } from "node:crypto";
+import { native, AgentHooksCoreError } from "./native";
+export { AgentHooksCoreError };
 
 /** Spec version this SDK implements (§4.1 `spec` field). */
 export const SPEC_VERSION = "agent-hooks/0.1";
@@ -107,22 +108,6 @@ export function hostErrorVerdict(err: HostError, message?: string): Verdict {
   return { decision: Decision.Deny, reason: err, message };
 }
 
-/** Validate per §5; throws on violation so the emitter maps to `verdict_invalid`. */
-export function validateVerdict(v: Verdict): void {
-  if (v.reason?.startsWith("host_error:")) {
-    throw new Error("verdict.reason MUST NOT start with 'host_error:' (§5)");
-  }
-  if (v.decision === Decision.Transform && !v.transform) {
-    throw new Error("transform body REQUIRED when decision=='transform' (§5)");
-  }
-  if (v.decision !== Decision.Transform && v.transform) {
-    throw new Error("transform body FORBIDDEN when decision!='transform' (§5)");
-  }
-  if (v.transform && !/^\$(target|policy_target)(\.|\[|$)/.test(v.transform.path)) {
-    throw new Error("transform.path must be rooted at $target (§5.2)");
-  }
-}
-
 /** Wire-shaped agent context (§4). L0 fields typed; L1/L2 indexed. */
 export interface AgentContext {
   spec: string;
@@ -182,81 +167,43 @@ export interface ApprovalResolver {
 }
 
 // ---- Canonical JSON & context identity (§10) -------------------------------
+//
+// Delegates to the Rust core via napi-rs so every SDK produces
+// byte-identical output. The pure-TS implementation was removed once the
+// core became canonical (see sdk/rust/core/src/canonical.rs).
 
-const L0 = new Set(["spec", "interception_point", "timestamp", "sequence", "agent", "session", "target"]);
-const L0_AGENT = new Set(["id", "framework"]);
-const L0_SESSION = new Set(["id"]);
-const L1: Record<InterceptionPoint, readonly string[]> = {
-  agent_startup: ["agent_init"],
-  input: ["input"],
-  pre_model_call: ["model", "messages"],
-  post_model_call: ["model", "response"],
-  pre_tool_call: ["tool_call"],
-  post_tool_call: ["tool_call", "tool_result"],
-  output: ["output"],
-  agent_shutdown: ["summary"],
-};
-
-function encode(v: JsonValue, out: string[]): void {
-  if (v === null) out.push("null");
-  else if (typeof v === "boolean") out.push(v ? "true" : "false");
-  else if (typeof v === "number") {
-    if (!Number.isFinite(v)) throw new Error("canonical JSON does not admit NaN/Infinity");
-    out.push(Object.is(v, -0) ? "0" : String(v)); // ECMA-262 ToString(Number)
-  } else if (typeof v === "string") out.push(JSON.stringify(v));
-  else if (Array.isArray(v)) {
-    out.push("[");
-    v.forEach((e, i) => {
-      if (i) out.push(",");
-      encode(e, out);
-    });
-    out.push("]");
-  } else {
-    out.push("{");
-    const keys = Object.keys(v).sort((a, b) =>
-      Buffer.compare(Buffer.from(a, "utf8"), Buffer.from(b, "utf8")),
-    );
-    keys.forEach((k, i) => {
-      if (i) out.push(",");
-      out.push(JSON.stringify(k), ":");
-      encode(v[k]!, out);
-    });
-    out.push("}");
-  }
-}
-
-/** Serialize per §10.1. */
+/** Serialize per §10.1. Implemented by the Rust core. */
 export function canonicalJson(v: JsonValue): string {
-  const out: string[] = [];
-  encode(v, out);
-  return out.join("");
+  return native.canonicalJson(JSON.stringify(v));
 }
 
-function stripToL01(ctx: AgentContext): JsonValue {
-  const l1 = new Set(L1[ctx.interception_point] ?? []);
-  const out: Record<string, JsonValue> = {};
-  for (const [k, v] of Object.entries(ctx)) {
-    if (v === undefined) continue;
-    if (!L0.has(k) && !l1.has(k)) continue;
-    if (k === "agent") {
-      out[k] = Object.fromEntries(
-        Object.entries(v as object).filter(([sk]) => L0_AGENT.has(sk)),
-      ) as JsonValue;
-    } else if (k === "session") {
-      out[k] = Object.fromEntries(
-        Object.entries(v as object).filter(([sk]) => L0_SESSION.has(sk)),
-      ) as JsonValue;
-    } else {
-      out[k] = v as JsonValue;
-    }
-  }
-  return out;
-}
-
-/** `"sha256:" + hex(SHA-256(canonicalJson(ctx_L01)))` (§10.2). */
+/** `"sha256:" + hex(SHA-256(canonicalJson(ctx_L01)))` (§10.2). Rust core. */
 export function contextIdentity(ctx: AgentContext): string {
-  const json = canonicalJson(stripToL01(ctx));
-  return "sha256:" + createHash("sha256").update(json, "utf8").digest("hex");
+  return native.contextIdentity(JSON.stringify(ctx));
+}
+
+/** §5: validate an interceptor's wire return value. Rust core. */
+export function validateVerdict(v: Verdict): void {
+  native.validateVerdict(JSON.stringify(v));
+}
+
+/** §5.2: apply a `$target`-rooted transform. Returns a new object. Rust core. */
+export function applyTransform(target: JsonValue, path: string, value: JsonValue): JsonValue {
+  return JSON.parse(native.applyTransform(JSON.stringify(target), path, JSON.stringify(value)));
+}
+
+/** §7.1: combine an ordered array of verdicts. Rust core. */
+export function combineVerdicts(verdicts: readonly Verdict[]): Verdict {
+  return JSON.parse(native.combineVerdicts(JSON.stringify(verdicts)));
+}
+
+/** §6/§8/§10: enforcement step. Returns `{record, ctx}`. Rust core. */
+export function enforce(
+  ctx: AgentContext,
+  verdict: Verdict,
+  mode: EnforcementMode,
+): { record: InterceptionRecord; ctx: AgentContext } {
+  return JSON.parse(native.enforce(JSON.stringify(ctx), JSON.stringify(verdict), mode));
 }
 
 /** Raised by a host when a verdict blocks the guarded action (§6). */

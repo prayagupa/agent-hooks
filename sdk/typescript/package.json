@@ -1,28 +1,36 @@
 {
   "name": "@responsibleai/agent-hooks",
   "version": "0.1.0-alpha.1",
-  "description": "Framework-neutral agent lifecycle hook contract (AGENT-HOOKS-0.1)",
+  "description": "Framework-neutral agent control contract (AGENT-HOOKS-0.1). TypeScript wrapper over the canonical Rust core.",
   "license": "MIT",
-  "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": "./dist/index.js",
     "./ctk": "./dist/ctk/index.js"
   },
-  "files": ["dist", "schema"],
+  "files": ["dist", "binding.js", "binding.d.ts", "*.node"],
   "repository": {
     "type": "git",
     "url": "https://github.com/responsibleai/agent-hooks.git",
     "directory": "sdk/typescript"
   },
+  "napi": {
+    "name": "agent-hooks",
+    "triples": {
+      "defaults": true
+    }
+  },
   "scripts": {
-    "build": "tsc",
-    "test": "tsc --noEmit && node --test"
+    "build:native": "napi build --release --platform --js binding.js --dts binding.d.ts",
+    "build:native:debug": "napi build --platform --js binding.js --dts binding.d.ts",
+    "build": "npm run build:native && tsc",
+    "test": "npm run build && node --test test/"
   },
   "devDependencies": {
-    "typescript": "^5.5.0",
-    "@types/node": "^22.0.0"
+    "@napi-rs/cli": "^2.18.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.0"
   },
   "engines": { "node": ">=20" }
 }
