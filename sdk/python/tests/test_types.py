@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import pytest
-
 from agent_hooks import Decision, HostError, InterceptionPoint, Transform, Verdict
 
 

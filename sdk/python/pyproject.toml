@@ -1,16 +1,16 @@
 [build-system]
-requires = ["hatchling>=1.21"]
-build-backend = "hatchling.build"
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
 
 [project]
 name = "agent-hooks"
 version = "0.1.0a1"
-description = "Framework-neutral agent lifecycle hook contract: interception points, context, verdict, and conformance test kit."
+description = "Framework-neutral agent control contract: interception points, agent context, verdict, and conformance test kit. Python wrapper over the canonical Rust core."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Responsible AI", email = "responsibleai@microsoft.com" }]
-keywords = ["ai-agents", "governance", "hooks", "lifecycle", "conformance"]
+keywords = ["ai-agents", "governance", "interception", "control", "conformance"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
@@ -19,13 +19,14 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Rust",
   "Topic :: Software Development :: Libraries",
 ]
 dependencies = []
 
 [project.optional-dependencies]
 ctk = ["jsonschema>=4.21", "pytest>=7.4"]
-dev = ["agent-hooks[ctk]", "mypy>=1.8", "ruff>=0.4"]
+dev = ["agent-hooks[ctk]", "mypy>=1.8", "ruff>=0.4", "maturin>=1.7,<2.0"]
 
 [project.urls]
 Homepage = "https://github.com/responsibleai/agent-hooks"
@@ -34,11 +35,10 @@ Specification = "https://github.com/responsibleai/agent-hooks/blob/main/spec/AGE
 [project.entry-points.pytest11]
 agent_hooks_ctk = "agent_hooks.ctk.plugin"
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/agent_hooks"]
-
-[tool.hatch.build.targets.wheel.shared-data]
-"src/agent_hooks/schema" = "agent_hooks/schema"
+[tool.maturin]
+python-source = "python"
+module-name = "agent_hooks._core"
+features = ["pyo3/extension-module"]
 
 [tool.ruff]
 line-length = 100

@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import pytest
-
 from agent_hooks._types import HostError
 from agent_hooks.path import PathError, apply, parse, resolve
 
@@ -34,8 +33,11 @@ def test_parse_rejects_foreign_root() -> None:
 def test_resolve_and_apply() -> None:
     target = {"a": {"b": [10, 20]}}
     assert resolve(target, "$target.a.b[1]") == 20
-    apply(target, "$target.a.b[1]", 99)
-    assert target["a"]["b"][1] == 99
+    # apply() delegates to the Rust core across the FFI boundary, so it
+    # returns a new object rather than mutating in place.
+    out = apply(target, "$target.a.b[1]", 99)
+    assert out["a"]["b"][1] == 99
+    assert target["a"]["b"][1] == 20
 
 
 def test_apply_root_replacement() -> None:

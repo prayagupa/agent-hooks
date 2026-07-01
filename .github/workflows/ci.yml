@@ -36,8 +36,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
+      - uses: dtolnay/rust-toolchain@stable
       - uses: astral-sh/setup-uv@v3
-      - run: uv pip install --system -e ./sdk/python[ctk,dev]
+      - name: Build native module and install
+        run: |
+          uv pip install --system maturin
+          maturin develop -m sdk/python/Cargo.toml
+          uv pip install --system -e ./sdk/python[ctk,dev]
       - run: ruff check sdk/python
       - run: pytest sdk/python/tests -p no:agent_hooks_ctk -v
 
@@ -58,9 +63,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with: { components: clippy }
-      - run: cargo clippy --all-features -- -D warnings
+      - run: cargo clippy --workspace --all-features -- -D warnings
         working-directory: sdk/rust
-      - run: cargo test --all-features
+      - run: cargo test --workspace --all-features
         working-directory: sdk/rust
 
   dotnet:

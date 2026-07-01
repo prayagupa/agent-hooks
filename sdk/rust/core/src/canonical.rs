@@ -38,10 +38,16 @@ fn encode(v: &Value, out: &mut String) {
         Value::Null => out.push_str("null"),
         Value::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
         Value::Number(n) => {
-            // serde_json::Number already produces shortest-round-trip;
-            // strip trailing .0 to match ECMA-262 / cross-SDK identities.
-            let s = n.to_string();
-            out.push_str(s.strip_suffix(".0").unwrap_or(&s));
+            // ECMA-262 Number.prototype.toString: shortest round-trip,
+            // integral values have no fractional part, and both zeros
+            // serialize as "0" (String(-0) === "0"). serde_json's
+            // Number::to_string is close; normalize the two edge cases.
+            if n.as_f64().map(|f| f == 0.0).unwrap_or(false) {
+                out.push('0');
+            } else {
+                let s = n.to_string();
+                out.push_str(s.strip_suffix(".0").unwrap_or(&s));
+            }
         }
         Value::String(s) => {
             // RFC 8259 minimal escapes via serde_json's serializer.

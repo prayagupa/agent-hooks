@@ -1,0 +1,16 @@
+[package]
+name = "agent-hooks-ffi"
+description = "C-ABI cdylib over the agent-hooks core for Go (cgo) and .NET (P/Invoke)."
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "agent_hooks_ffi"
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+agent-hooks = { path = "../core" }

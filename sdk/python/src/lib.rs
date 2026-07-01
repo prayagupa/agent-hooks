@@ -1,0 +1,79 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+//! PyO3 bindings: `agent_hooks._core`.
+//!
+//! Thin wrapper over `agent_hooks::ffi_surface`. All functions take and
+//! return Python `str` (UTF-8 JSON); errors raise `AgentHooksCoreError`
+//! with `.code` set to the §11 `host_error:*` string.
+
+use agent_hooks::ffi_surface as core;
+use pyo3::create_exception;
+use pyo3::exceptions::PyValueError;
+use pyo3::prelude::*;
+
+create_exception!(_core, AgentHooksCoreError, PyValueError);
+
+fn map_err(py: Python<'_>, e: core::FfiError) -> PyErr {
+    let (code, detail) = e;
+    let exc = AgentHooksCoreError::new_err(format!("{code}: {detail}"));
+    // Attach .code so the Python wrapper can map to HostError enum without
+    // parsing the message.
+    if let Ok(v) = exc.value_bound(py).setattr("code", code) {
+        let _ = v;
+    }
+    exc
+}
+
+#[pyfunction]
+fn spec_version() -> &'static str {
+    core::spec_version()
+}
+
+#[pyfunction]
+fn canonical_json(py: Python<'_>, value_json: &str) -> PyResult<String> {
+    core::canonical_json(value_json).map_err(|e| map_err(py, e))
+}
+
+#[pyfunction]
+fn context_identity(py: Python<'_>, ctx_json: &str) -> PyResult<String> {
+    core::context_identity(ctx_json).map_err(|e| map_err(py, e))
+}
+
+#[pyfunction]
+fn validate_verdict(py: Python<'_>, verdict_json: &str) -> PyResult<String> {
+    core::validate_verdict(verdict_json).map_err(|e| map_err(py, e))
+}
+
+#[pyfunction]
+fn apply_transform(
+    py: Python<'_>,
+    target_json: &str,
+    path: &str,
+    value_json: &str,
+) -> PyResult<String> {
+    core::apply_transform(target_json, path, value_json).map_err(|e| map_err(py, e))
+}
+
+#[pyfunction]
+fn combine_verdicts(py: Python<'_>, verdicts_json: &str) -> PyResult<String> {
+    core::combine_verdicts(verdicts_json).map_err(|e| map_err(py, e))
+}
+
+#[pyfunction]
+fn enforce(py: Python<'_>, ctx_json: &str, verdict_json: &str, mode: &str) -> PyResult<String> {
+    core::enforce(ctx_json, verdict_json, mode).map_err(|e| map_err(py, e))
+}
+
+#[pymodule]
+fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add("SPEC_VERSION", core::spec_version())?;
+    m.add("AgentHooksCoreError", m.py().get_type_bound::<AgentHooksCoreError>())?;
+    m.add_function(wrap_pyfunction!(spec_version, m)?)?;
+    m.add_function(wrap_pyfunction!(canonical_json, m)?)?;
+    m.add_function(wrap_pyfunction!(context_identity, m)?)?;
+    m.add_function(wrap_pyfunction!(validate_verdict, m)?)?;
+    m.add_function(wrap_pyfunction!(apply_transform, m)?)?;
+    m.add_function(wrap_pyfunction!(combine_verdicts, m)?)?;
+    m.add_function(wrap_pyfunction!(enforce, m)?)?;
+    Ok(())
+}

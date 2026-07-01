@@ -1,11 +1,19 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
-"""``$target`` JSONPath subset: parse, resolve, and apply transforms (§5.2)."""
+"""``$target`` JSONPath subset: parse, resolve, apply transforms (§5.2).
+
+Delegates to the Rust core (``agent_hooks._core``). The parse/resolve
+helpers remain pure-Python for callers that need segment introspection
+without a JSON round-trip; ``apply`` — the security-relevant path — goes
+through the core so behaviour is identical across SDKs.
+"""
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
+from agent_hooks import _core
 from agent_hooks._types import HostError
 
 _ROOT_RE = re.compile(r"^\$(target|policy_target)")
@@ -28,7 +36,11 @@ class PathError(ValueError):
 
 
 def parse(path: str) -> list[str | int]:
-    """Parse a §5.2 path into segments. Raises :class:`PathError`."""
+    """Parse a §5.2 path into segments. Raises :class:`PathError`.
+
+    Local implementation retained for introspection only; the grammar is
+    identical to ``sdk/rust/core/src/path.rs``.
+    """
     m = _ROOT_RE.match(path)
     if not m:
         raise PathError(
@@ -67,26 +79,12 @@ def resolve(target: Any, path: str) -> Any:
 def apply(target: Any, path: str, value: Any) -> Any:
     """Return ``target`` with the value at ``path`` replaced by ``value``.
 
-    Mutates ``target`` in place when it is a mutable container and returns
-    it; when ``path`` is the bare root, returns ``value`` (the whole target
-    is replaced).
+    Delegates to the Rust core. Returns a new object (deep copy semantics
+    across the FFI boundary); ``target`` is not mutated.
     """
-    segs = parse(path)
-    if not segs:
-        return value
-    cur = target
-    for seg in segs[:-1]:
-        try:
-            cur = cur[seg]
-        except (KeyError, IndexError, TypeError) as e:
-            raise PathError(
-                HostError.TRANSFORM_INVALID, f"segment {seg!r} did not resolve: {e}"
-            ) from e
-    last = segs[-1]
     try:
-        cur[last] = value
-    except (IndexError, TypeError) as e:
-        raise PathError(
-            HostError.TRANSFORM_INVALID, f"cannot set {last!r}: {e}"
-        ) from e
-    return target
+        out = _core.apply_transform(json.dumps(target), path, json.dumps(value))
+    except _core.AgentHooksCoreError as e:
+        code = getattr(e, "code", HostError.TRANSFORM_INVALID.value)
+        raise PathError(HostError(code), str(e)) from e
+    return json.loads(out)

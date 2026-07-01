@@ -6,7 +6,6 @@ from __future__ import annotations
 import pathlib
 
 import pytest
-
 from agent_hooks.ctk import load_vectors, run_vector
 from agent_hooks.ctk.reference import ReferenceHarness
 

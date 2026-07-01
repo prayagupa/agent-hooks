@@ -1,0 +1,18 @@
+[package]
+name = "agent-hooks-python"
+version = "0.1.0-alpha.1"
+edition = "2021"
+license = "MIT"
+description = "PyO3 bindings for the agent-hooks Rust core."
+publish = false
+
+[lib]
+name = "_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+agent-hooks = { path = "../rust/core" }
+pyo3 = { version = "0.22", features = ["extension-module", "abi3-py310"] }
+
+[build-dependencies]
+pyo3-build-config = "0.22"

@@ -237,3 +237,34 @@ class InterceptionRecord:
         if self.mode is EnforcementMode.EVALUATE_ONLY:
             return True
         return self.verdict.decision.permits
+
+    @classmethod
+    def from_core(cls, obj: dict[str, Any]) -> InterceptionRecord:
+        """Reconstruct from the JSON emitted by ``_core.enforce``.
+
+        The core serializes the verdict permissively (it may carry a
+        host-synthesized ``host_error:*`` reason), so bypass
+        :meth:`Verdict.from_wire` and construct directly.
+        """
+        vw = obj["verdict"]
+        transform = None
+        if vw.get("transform") is not None:
+            transform = Transform(vw["transform"]["path"], vw["transform"]["value"])
+        evidence = None
+        if vw.get("evidence") is not None:
+            evidence = Evidence.from_wire(vw["evidence"])
+        verdict = object.__new__(Verdict)
+        object.__setattr__(verdict, "decision", Decision(vw["decision"]))
+        object.__setattr__(verdict, "reason", vw.get("reason"))
+        object.__setattr__(verdict, "message", vw.get("message"))
+        object.__setattr__(verdict, "transform", transform)
+        object.__setattr__(verdict, "evidence", evidence)
+        object.__setattr__(verdict, "result_labels", tuple(vw.get("result_labels") or ()))
+        return cls(
+            interception_point=InterceptionPoint(obj["interception_point"]),
+            mode=EnforcementMode(obj["mode"]),
+            verdict=verdict,
+            input_identity=obj["input_identity"],
+            enforced_identity=obj["enforced_identity"],
+            transformed_target=obj.get("transformed_target"),
+        )
