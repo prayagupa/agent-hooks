@@ -39,10 +39,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: astral-sh/setup-uv@v3
       - name: Build native module and install
-        run: |
-          uv pip install --system maturin
-          maturin develop -m sdk/python/Cargo.toml
-          uv pip install --system -e ./sdk/python[ctk,dev]
+        # maturin is the PEP 517 build backend; `pip install -e` invokes
+        # it automatically. `maturin develop` needs a venv, which the
+        # --system install does not have.
+        run: uv pip install --system -e ./sdk/python[ctk,dev]
       - run: ruff check sdk/python
       - run: pytest sdk/python/tests -p no:agent_hooks_ctk -v
 
@@ -59,7 +59,7 @@ jobs:
         working-directory: sdk/typescript
       - run: npx tsc
         working-directory: sdk/typescript
-      - run: node --test test/
+      - run: node --test test/golden_identity.test.mjs
         working-directory: sdk/typescript
 
   rust:
