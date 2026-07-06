@@ -104,7 +104,12 @@ class ReferenceHarness:
             )
         )
         return RunRecord(
-            outcome=outcome, final_output=final, tool_invocations=list(self._tool_log)
+            outcome=outcome,
+            final_output=final,
+            tool_invocations=list(self._tool_log),
+            identities=[
+                (r.input_identity, r.enforced_identity) for r in em.results
+            ],
         )
 
     def teardown(self) -> None:

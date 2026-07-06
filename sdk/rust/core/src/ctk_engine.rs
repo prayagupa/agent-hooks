@@ -121,6 +121,13 @@ pub fn scripted_resolve(rules: &[Value], ctx: &Value, context_identity: &str) ->
 
 // ---- assertion engine ------------------------------------------------------
 
+/// One `(input_identity, enforced_identity)` pair per interception.
+#[derive(Debug, Deserialize)]
+pub struct IdentityPair {
+    pub input_identity: String,
+    pub enforced_identity: String,
+}
+
 /// Wire-shaped `RunRecord` the harness returns.
 #[derive(Debug, Deserialize)]
 pub struct RunRecord {
@@ -131,6 +138,11 @@ pub struct RunRecord {
     pub tool_invocations: Vec<Value>,
     #[serde(default)]
     pub error: Option<String>,
+    /// One entry per interception, in order. Populated by the harness
+    /// from its emitter's `InterceptionRecord`s so the CTK can assert
+    /// `expect.identities_equal` (RM-N15).
+    #[serde(default)]
+    pub identities: Vec<IdentityPair>,
 }
 
 /// Result of one vector run.
@@ -276,6 +288,39 @@ fn assert_record(expect: &Value, rr: &RunRecord, failures: &mut Vec<String>) {
     }
 }
 
+fn assert_identities(expect: &Value, rr: &RunRecord, failures: &mut Vec<String>) {
+    let Some(want_equal) = expect.get("identities_equal").and_then(Value::as_bool) else {
+        return;
+    };
+    if rr.identities.is_empty() {
+        failures.push(
+            "expect.identities_equal is set but harness did not report identities".into(),
+        );
+        return;
+    }
+    let all_equal = rr
+        .identities
+        .iter()
+        .all(|p| p.input_identity == p.enforced_identity);
+    if want_equal && !all_equal {
+        let diffs: Vec<usize> = rr
+            .identities
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.input_identity != p.enforced_identity)
+            .map(|(i, _)| i)
+            .collect();
+        failures.push(format!(
+            "identities_equal: expected input==enforced at every interception, but they differ at indices {diffs:?}"
+        ));
+    } else if !want_equal && all_equal {
+        failures.push(
+            "identities_equal: expected input!=enforced at some interception (a transform was applied), but all pairs are equal"
+                .into(),
+        );
+    }
+}
+
 fn assert_sequence(recorded: &[Value], failures: &mut Vec<String>) {
     let seq: Vec<i64> = recorded
         .iter()
@@ -321,6 +366,7 @@ pub fn assert_vector(vector: &Value, recorded: &[Value], rr: &RunRecord) -> Vect
     assert_interceptions(&vector["expect"], recorded, &mut failures);
     assert_record(&vector["expect"], rr, &mut failures);
     assert_sequence(recorded, &mut failures);
+    assert_identities(&vector["expect"], rr, &mut failures);
 
     VectorResult {
         id,
@@ -399,6 +445,7 @@ mod tests {
             final_output: Value::Null,
             tool_invocations: vec![],
             error: None,
+            identities: vec![],
         };
         let r = assert_vector(&vector, &recorded, &rr);
         assert_eq!(r.status, "pass", "{:?}", r.failures);

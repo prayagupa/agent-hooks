@@ -103,6 +103,9 @@ class RunRecord:
     final_output: Any | None
     tool_invocations: list[dict[str, Any]] = field(default_factory=list)
     error: str | None = None
+    #: ``(input_identity, enforced_identity)`` per interception, in order,
+    #: from the harness's emitter. Enables ``expect.identities_equal``.
+    identities: list[tuple[str, str]] = field(default_factory=list)
 
 
 class Harness(Protocol):
