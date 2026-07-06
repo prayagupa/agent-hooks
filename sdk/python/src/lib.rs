@@ -18,9 +18,7 @@ fn map_err(py: Python<'_>, e: core::FfiError) -> PyErr {
     let exc = AgentHooksCoreError::new_err(format!("{code}: {detail}"));
     // Attach .code so the Python wrapper can map to HostError enum without
     // parsing the message.
-    if let Ok(v) = exc.value_bound(py).setattr("code", code) {
-        let _ = v;
-    }
+    let _ = exc.value(py).setattr("code", code);
     exc
 }
 
@@ -103,7 +101,7 @@ fn ctk_assert(
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("SPEC_VERSION", core::spec_version())?;
-    m.add("AgentHooksCoreError", m.py().get_type_bound::<AgentHooksCoreError>())?;
+    m.add("AgentHooksCoreError", m.py().get_type::<AgentHooksCoreError>())?;
     m.add_function(wrap_pyfunction!(spec_version, m)?)?;
     m.add_function(wrap_pyfunction!(canonical_json, m)?)?;
     m.add_function(wrap_pyfunction!(context_identity, m)?)?;

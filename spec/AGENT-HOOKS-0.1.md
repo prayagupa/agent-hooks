@@ -79,9 +79,43 @@ capitals.
 - **Fail closed.** A host that cannot construct a valid `AgentContext`, cannot
   reach a registered interceptor, or receives an invalid `Verdict` MUST treat the
   outcome as `deny` with a `host_error:*` reason per §11.
-- **No silent bypass.** A host MUST NOT execute the action guarded by a hook
-  point without first invoking every registered controlling interceptor for that
-  point and honouring the resulting verdict per §6.
+- **No silent bypass.** A host MUST NOT execute the action guarded by an
+  interception point without first invoking every registered interceptor
+  for that point and honouring the resulting verdict per §6.
+
+### 1.4 Trust model and non-goals
+
+[Pure Specification]
+
+This specification constrains a **cooperating host**. It is not a
+security boundary against a hostile or buggy host, and conformance is
+not a security certification.
+
+- The host is inside the trust boundary. Every obligation in §6 and
+  §1.3 is a MUST on the host; a host that does not honour them voids
+  the contract. This specification defines no mechanism to detect a
+  host that skips interception points, ignores verdicts, or
+  misreports enforcement mode.
+- Registered interceptors are inside the host process and are fully
+  trusted by the host. They receive the raw `target` (which may
+  contain user PII, secrets in tool arguments, and model output) and
+  any registered interceptor MAY return `deny` or `transform` at any
+  interception point. Registering an interceptor is equivalent to
+  granting it write access to every action the agent takes.
+- The approval resolver (§9) is inside the host process and is fully
+  trusted by the host.
+- The eight interception points in §3 are the paths a conformant host
+  wires. This specification does not claim complete mediation: a
+  framework MAY expose code paths (direct tool execution, plugin
+  hooks, background tasks) that do not reach any interception point,
+  and the CTK cannot detect them.
+- This specification does not define sandboxing, process isolation,
+  authentication of interceptors, or authorization of who may register
+  an interceptor. Those are host concerns.
+- Conformance (§13) attests that the host adapter honours the verdict
+  contract under CTK conditions with a mocked model and tools. It is
+  not adversarial testing and MUST NOT be presented as a security
+  certification.
 
 ---
 

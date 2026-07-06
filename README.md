@@ -17,6 +17,16 @@ returns a `Verdict` the host MUST act on. Passive observation, tracing, and
 metrics emission are out of scope; use the framework's native telemetry for
 those.
 
+## What agent-hooks is not
+
+agent-hooks is a cooperative contract, **not a security boundary**. The
+host is fully trusted; interceptors run in-process with full data
+access; the eight interception points do not guarantee complete
+mediation; and a conformance level is not a security certification.
+See [`SECURITY.md`](SECURITY.md) and
+[spec §1.4](spec/AGENT-HOOKS-0.1.md#14-trust-model-and-non-goals) for
+the normative statement.
+
 [acs]: https://github.com/microsoft/agent-governance-toolkit
 
 ## What's here
