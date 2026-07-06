@@ -1,13 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 /**
- * Conformance Test Kit harness contract (§13.2).
+ * Conformance Test Kit (§13.2).
  *
- * The TypeScript CTK runner is not yet implemented; this module defines the
- * `Harness` interface so framework adapters can be written now. Track the
- * runner at https://github.com/responsibleai/agent-hooks/issues/3; the
- * Python implementation at `sdk/python/src/agent_hooks/ctk/runner.py` is the
- * reference.
+ * The assertion engine and scripted interceptor/resolver live in the
+ * Rust core; this module defines the `Harness` interface framework
+ * adapters implement, plus the runner and reference harness that use it.
  */
 
 import type {
@@ -15,7 +13,10 @@ import type {
   EnforcementMode,
   Interceptor,
   JsonValue,
-} from "../index.js";
+} from "../index";
+
+export { loadVectors, runVector, runVectors, VectorResult } from "./runner";
+export { ReferenceHarness } from "./reference";
 
 /** Host-declared capability subset (§3.2). */
 export type Capability =
@@ -50,6 +51,9 @@ export interface RunRecord {
   final_output: JsonValue | null;
   tool_invocations: Array<{ name: string; args: Record<string, JsonValue> }>;
   error?: string;
+  /** `(input_identity, enforced_identity)` per interception, in order,
+   * from the harness's emitter. Enables `expect.identities_equal`. */
+  identities: Array<[string, string]>;
 }
 
 /** The single interface a framework adapter implements for the CTK. */

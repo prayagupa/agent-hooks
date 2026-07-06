@@ -113,3 +113,44 @@ func nativeEnforce(ctxJSON, verdictJSON, mode string) (string, error) {
 	defer fm()
 	return unwrap(C.ah_enforce(cc, cv, cm))
 }
+
+// ---- CTK engine (§13.2) ---------------------------------------------------
+//
+// Unexported string→string cgo shims. Exported, typed wrappers live in
+// ctk.go (separate file so this cgo unit stays minimal).
+
+func nativeCtkScriptedIntercept(rulesJSON, ctxJSON string) (string, error) {
+	cr, fr := cstr(rulesJSON)
+	defer fr()
+	cc, fc := cstr(ctxJSON)
+	defer fc()
+	return unwrap(C.ah_ctk_scripted_intercept(cr, cc))
+}
+
+func nativeCtkScriptedResolve(rulesJSON, ctxJSON, identity string) (string, error) {
+	cr, fr := cstr(rulesJSON)
+	defer fr()
+	cc, fc := cstr(ctxJSON)
+	defer fc()
+	ci, fi := cstr(identity)
+	defer fi()
+	return unwrap(C.ah_ctk_scripted_resolve(cr, cc, ci))
+}
+
+func nativeCtkShouldSkip(vectorJSON, capsJSON string) (string, error) {
+	cv, fv := cstr(vectorJSON)
+	defer fv()
+	cc, fc := cstr(capsJSON)
+	defer fc()
+	return unwrap(C.ah_ctk_should_skip(cv, cc))
+}
+
+func nativeCtkAssert(vectorJSON, recordedJSON, runRecordJSON string) (string, error) {
+	cv, fv := cstr(vectorJSON)
+	defer fv()
+	cr, fr := cstr(recordedJSON)
+	defer fr()
+	crr, frr := cstr(runRecordJSON)
+	defer frr()
+	return unwrap(C.ah_ctk_assert(cv, cr, crr))
+}

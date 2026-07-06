@@ -1,0 +1,140 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+/**
+ * Reference in-memory agent + harness.
+ *
+ * The simplest possible Level-2-conformant agent loop; exists so the
+ * CTK can self-test without a real framework. Port of
+ * `sdk/python/python/agent_hooks/ctk/reference.py`.
+ */
+
+import { randomUUID } from "node:crypto";
+
+import {
+  ApprovalResolver,
+  EnforcementMode,
+  Interceptor,
+  InterceptionBlocked,
+  JsonValue,
+} from "../index";
+import { AgentContextBuilder } from "../builder";
+import { InterceptionEmitter } from "../emitter";
+import type { Capability, Harness, RunOutcome, RunRecord, Scenario } from "./index";
+
+type ToolArgs = Record<string, JsonValue>;
+
+export class ReferenceHarness implements Harness {
+  readonly name = "reference-agent";
+  readonly capabilities: ReadonlySet<Capability> = new Set(["model_calls", "tool_calls"]);
+
+  private scenario!: Scenario;
+  private emitter!: InterceptionEmitter;
+  private builder!: AgentContextBuilder;
+  private toolLog: Array<{ name: string; args: ToolArgs }> = [];
+
+  setup(
+    scenario: Scenario,
+    interceptor: Interceptor,
+    resolver: ApprovalResolver | null,
+    mode: EnforcementMode,
+  ): void {
+    this.scenario = scenario;
+    this.toolLog = [];
+    this.emitter = new InterceptionEmitter(mode, resolver).register(interceptor);
+    this.builder = new AgentContextBuilder({
+      agentId: "ref-agent",
+      framework: "reference-agent",
+      sessionId: randomUUID(),
+    });
+  }
+
+  async run(): Promise<RunRecord> {
+    const s = this.scenario;
+    const em = this.emitter;
+    const b = this.builder;
+    let outcome: RunOutcome = "completed";
+    let final: JsonValue | null = null;
+
+    const tools = new Map((s.tools ?? []).map((t) => [t.name, t]));
+    const invokeTool = (name: string, args: ToolArgs): { value: JsonValue; is_error: boolean } => {
+      const spec = tools.get(name);
+      if (!spec) throw new Error(`tool ${name} not in scenario`);
+      for (const bh of spec.behavior) {
+        if (!bh.when_args || JSON.stringify(bh.when_args) === JSON.stringify(args)) {
+          return { value: bh.return, is_error: bh.is_error ?? false };
+        }
+      }
+      throw new Error(`tool ${name} invoked with ${JSON.stringify(args)}: no matching behavior`);
+    };
+
+    try {
+      await em.emitOrThrow(b.agentStartup([...tools.keys()].sort()));
+      await em.emitOrThrow(b.input(s.input.content, s.input.role));
+
+      let messages: Array<{ role: string; content: JsonValue }> = [
+        { role: s.input.role, content: s.input.content },
+      ];
+
+      for (const step of s.model_script ?? []) {
+        const resp = step.respond;
+        const preCtx = b.preModelCall("mock", [...messages]);
+        await em.emitOrThrow(preCtx);
+        messages = preCtx.messages as typeof messages;
+
+        await em.emitOrThrow(
+          b.postModelCall("mock", resp.content, resp.tool_calls, resp.finish_reason),
+        );
+
+        if (resp.tool_calls.length > 0) {
+          for (const tc of resp.tool_calls) {
+            try {
+              const preTc = b.preToolCall(tc.id, tc.name, { ...tc.args });
+              await em.emitOrThrow(preTc);
+              const args = (preTc.tool_call as { args: ToolArgs }).args;
+              const { value, is_error } = invokeTool(tc.name, args);
+              this.toolLog.push({ name: tc.name, args: { ...args } });
+              await em.emitOrThrow(b.postToolCall(tc.id, tc.name, { ...args }, value, is_error));
+              messages.push({ role: "tool", content: value });
+            } catch (e) {
+              if (e instanceof InterceptionBlocked) {
+                messages.push({ role: "tool", content: `blocked: ${e.result.verdict.reason}` });
+              } else {
+                throw e;
+              }
+            }
+          }
+          messages.push({ role: "assistant", content: resp.content ?? "" });
+        } else {
+          final = resp.content;
+          break;
+        }
+      }
+
+      if (final !== null) {
+        const outCtx = b.output(final);
+        await em.emitOrThrow(outCtx);
+        final = (outCtx.output as { content: JsonValue }).content;
+      }
+    } catch (e) {
+      if (e instanceof InterceptionBlocked) {
+        outcome = "blocked";
+        final = null;
+      } else {
+        throw e;
+      }
+    }
+
+    await em.emit(b.agentShutdown(outcome === "completed" ? "completed" : "error"));
+
+    return {
+      outcome,
+      final_output: final,
+      tool_invocations: this.toolLog,
+      identities: em.records.map((r) => [r.input_identity, r.enforced_identity] as [string, string]),
+    };
+  }
+
+  teardown(): void {
+    // no-op
+  }
+}

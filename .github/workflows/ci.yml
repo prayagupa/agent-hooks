@@ -59,7 +59,7 @@ jobs:
         working-directory: sdk/typescript
       - run: npx tsc
         working-directory: sdk/typescript
-      - run: node --test test/golden_identity.test.mjs
+      - run: node --test test/golden_identity.test.mjs test/ctk_reference.test.mjs
         working-directory: sdk/typescript
 
   rust:

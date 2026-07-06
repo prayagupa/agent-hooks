@@ -6,7 +6,11 @@
 // Every function returns a heap-allocated AhResult* the caller frees with
 // ah_free_result. See sdk/rust/ffi/include/agent_hooks.h.
 
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+
+[assembly: InternalsVisibleTo("AgentHooks.Conformance")]
+[assembly: InternalsVisibleTo("AgentHooks.Tests")]
 
 namespace AgentHooks;
 
@@ -54,6 +58,20 @@ internal static partial class Native
     [LibraryImport(Lib, StringMarshalling = StringMarshalling.Utf8)]
     private static partial IntPtr ah_enforce(string ctxJson, string verdictJson, string mode);
 
+    // ---- CTK engine (§13.2) ------------------------------------------------
+
+    [LibraryImport(Lib, StringMarshalling = StringMarshalling.Utf8)]
+    private static partial IntPtr ah_ctk_scripted_intercept(string rulesJson, string ctxJson);
+
+    [LibraryImport(Lib, StringMarshalling = StringMarshalling.Utf8)]
+    private static partial IntPtr ah_ctk_scripted_resolve(string rulesJson, string ctxJson, string identity);
+
+    [LibraryImport(Lib, StringMarshalling = StringMarshalling.Utf8)]
+    private static partial IntPtr ah_ctk_should_skip(string vectorJson, string harnessCapsJson);
+
+    [LibraryImport(Lib, StringMarshalling = StringMarshalling.Utf8)]
+    private static partial IntPtr ah_ctk_assert(string vectorJson, string recordedJson, string runRecordJson);
+
     private static string Unwrap(IntPtr p)
     {
         if (p == IntPtr.Zero)
@@ -83,4 +101,13 @@ internal static partial class Native
     internal static string CombineVerdicts(string verdictsJson) => Unwrap(ah_combine_verdicts(verdictsJson));
     internal static string Enforce(string ctxJson, string verdictJson, string mode) =>
         Unwrap(ah_enforce(ctxJson, verdictJson, mode));
+
+    internal static string CtkScriptedIntercept(string rulesJson, string ctxJson) =>
+        Unwrap(ah_ctk_scripted_intercept(rulesJson, ctxJson));
+    internal static string CtkScriptedResolve(string rulesJson, string ctxJson, string identity) =>
+        Unwrap(ah_ctk_scripted_resolve(rulesJson, ctxJson, identity));
+    internal static string CtkShouldSkip(string vectorJson, string harnessCapsJson) =>
+        Unwrap(ah_ctk_should_skip(vectorJson, harnessCapsJson));
+    internal static string CtkAssert(string vectorJson, string recordedJson, string runRecordJson) =>
+        Unwrap(ah_ctk_assert(vectorJson, recordedJson, runRecordJson));
 }

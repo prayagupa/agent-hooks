@@ -62,8 +62,8 @@ type HostError string
 
 const (
 	ErrContextInvalid           HostError = "host_error:context_invalid"
-	ErrConsumerFailed           HostError = "host_error:interceptor_failed"
-	ErrConsumerTimeout          HostError = "host_error:interceptor_timeout"
+	ErrInterceptorFailed           HostError = "host_error:interceptor_failed"
+	ErrInterceptorTimeout          HostError = "host_error:interceptor_timeout"
 	ErrVerdictInvalid           HostError = "host_error:verdict_invalid"
 	ErrTransformInvalid         HostError = "host_error:transform_invalid"
 	ErrTransformTargetForbidden HostError = "host_error:transform_target_forbidden"

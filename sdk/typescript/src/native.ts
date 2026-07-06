@@ -19,6 +19,10 @@ const binding = require("../binding.js") as {
   applyTransform(targetJson: string, path: string, valueJson: string): string;
   combineVerdicts(verdictsJson: string): string;
   enforce(ctxJson: string, verdictJson: string, mode: string): string;
+  ctkScriptedIntercept(rulesJson: string, ctxJson: string): string;
+  ctkScriptedResolve(rulesJson: string, ctxJson: string, identity: string): string;
+  ctkShouldSkip(vectorJson: string, capsJson: string): string;
+  ctkAssert(vectorJson: string, recordedJson: string, runRecordJson: string): string;
 };
 
 /** Thrown by every native function on failure. `.code` is the §11
@@ -54,4 +58,8 @@ export const native = {
   applyTransform: wrap(binding.applyTransform),
   combineVerdicts: wrap(binding.combineVerdicts),
   enforce: wrap(binding.enforce),
+  ctkScriptedIntercept: wrap(binding.ctkScriptedIntercept),
+  ctkScriptedResolve: wrap(binding.ctkScriptedResolve),
+  ctkShouldSkip: wrap(binding.ctkShouldSkip),
+  ctkAssert: wrap(binding.ctkAssert),
 };

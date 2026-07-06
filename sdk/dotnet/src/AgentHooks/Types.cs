@@ -75,6 +75,16 @@ public static class DecisionExtensions
         _ => throw new ArgumentOutOfRangeException(nameof(d)),
     };
 
+    public static Decision FromWireName(string s) => s switch
+    {
+        "allow" => Decision.Allow,
+        "deny" => Decision.Deny,
+        "warn" => Decision.Warn,
+        "escalate" => Decision.Escalate,
+        "transform" => Decision.Transform,
+        _ => throw new ArgumentOutOfRangeException(nameof(s), s, "Unknown decision"),
+    };
+
     /// <summary>Whether the action proceeds under this decision (§2 permit class).</summary>
     public static bool Permits(this Decision d) =>
         d is Decision.Allow or Decision.Warn or Decision.Transform;
@@ -133,6 +143,57 @@ public sealed record Verdict(
             throw new ArgumentException("transform body REQUIRED when decision=='transform' (§5)");
         if (Decision != Decision.Transform && Transform is not null)
             throw new ArgumentException("transform body FORBIDDEN when decision!='transform' (§5)");
+    }
+
+    /// <summary>Serialize to the wire shape the Rust core consumes.</summary>
+    public JsonObject ToWire()
+    {
+        var o = new JsonObject { ["decision"] = Decision.ToWireName() };
+        if (Reason is not null) o["reason"] = Reason;
+        if (Message is not null) o["message"] = Message;
+        if (Transform is not null)
+            o["transform"] = new JsonObject
+            {
+                ["path"] = Transform.Path,
+                ["value"] = Transform.Value?.DeepClone(),
+            };
+        if (Evidence is not null)
+        {
+            var e = new JsonObject();
+            if (Evidence.Artefact is not null) e["artefact"] = Evidence.Artefact;
+            if (Evidence.VerificationPointers is { Count: > 0 })
+            {
+                var vp = new JsonObject();
+                foreach (var (k, v) in Evidence.VerificationPointers) vp[k] = v;
+                e["verification_pointers"] = vp;
+            }
+            o["evidence"] = e;
+        }
+        if (ResultLabels is { Count: > 0 })
+            o["result_labels"] = new JsonArray(ResultLabels.Select(l => (JsonNode)l).ToArray());
+        return o;
+    }
+
+    /// <summary>Reconstruct from a wire-shaped verdict object.
+    /// Permissive: accepts host_error:* reasons (used for records emitted by the core).</summary>
+    public static Verdict FromWire(JsonObject o)
+    {
+        Transform? t = null;
+        if (o["transform"] is JsonObject to)
+            t = new Transform((string)to["path"]!, to["value"]?.DeepClone());
+        Evidence? ev = null;
+        if (o["evidence"] is JsonObject eo)
+            ev = new Evidence(
+                (string?)eo["artefact"],
+                (eo["verification_pointers"] as JsonObject)?
+                    .ToDictionary(kv => kv.Key, kv => (string)kv.Value!));
+        var labels = (o["result_labels"] as JsonArray)?
+            .Select(n => (string)n!).ToList();
+        return new Verdict(
+            DecisionExtensions.FromWireName((string)o["decision"]!),
+            (string?)o["reason"],
+            (string?)o["message"],
+            t, ev, labels);
     }
 }
 

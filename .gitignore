@@ -447,6 +447,8 @@ target/
 
 # TypeScript build output
 sdk/typescript/dist/
+# napi-rs native modules (built per-platform; distributed via npm optionalDependencies)
+sdk/typescript/*.node
 
 # Go
 sdk/go/**/*.test

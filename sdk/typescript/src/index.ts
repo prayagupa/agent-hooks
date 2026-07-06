@@ -206,6 +206,9 @@ export function enforce(
   return JSON.parse(native.enforce(JSON.stringify(ctx), JSON.stringify(verdict), mode));
 }
 
+export { AgentContextBuilder } from "./builder";
+export { InterceptionEmitter } from "./emitter";
+
 /** Raised by a host when a verdict blocks the guarded action (§6). */
 export class InterceptionBlocked extends Error {
   constructor(public readonly result: InterceptionRecord) {

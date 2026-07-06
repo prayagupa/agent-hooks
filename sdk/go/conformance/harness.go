@@ -1,13 +1,14 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-// Package conformance defines the CTK harness contract (§13.2).
+// Package conformance provides the CTK harness contract, runner, and
+// reference harness (§13.2).
 //
-// The Go CTK runner is not yet implemented; this package defines the
-// Harness interface so framework adapters can be written now. Track the
-// runner at https://github.com/responsibleai/agent-hooks/issues/5; the
-// Python implementation at sdk/python/src/agent_hooks/ctk/runner.py is
-// the reference.
+// The runner (RunVector) and scripted interceptor/resolver evaluation
+// delegate to the Rust core via agenthooks.Ctk*; this package keeps
+// only the Harness protocol (native callback into the framework under
+// test), a recording wrapper, and Scenario helpers. See
+// conformance/RUNNER.md for the shape every language SDK follows.
 package conformance
 
 import (
@@ -50,12 +51,23 @@ type ToolInvocation struct {
 	Args map[string]any `json:"args"`
 }
 
+// IdentityPair is one (input_identity, enforced_identity) pair per
+// interception, taken from the emitter's InterceptionRecords so the
+// CTK can assert expect.identities_equal.
+type IdentityPair struct {
+	InputIdentity    string `json:"input_identity"`
+	EnforcedIdentity string `json:"enforced_identity"`
+}
+
 // RunRecord is what Harness.Run returns to the CTK runner.
 type RunRecord struct {
 	Outcome         RunOutcome
 	FinalOutput     any
 	ToolInvocations []ToolInvocation
 	Err             string
+	// Identities is one entry per interception, in order, from the
+	// harness's emitter.
+	Identities []IdentityPair
 }
 
 // Harness is the single interface a framework adapter implements for the CTK.
