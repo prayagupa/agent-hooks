@@ -445,10 +445,12 @@ target/
 # for the FFI cdylib every other SDK depends on; addresses RM-N17). The
 # per-binding crates (sdk/python, sdk/typescript) also commit theirs.
 
-# TypeScript build output
+# Native build outputs — never commit compiled artefacts (N07).
 sdk/typescript/dist/
-# napi-rs native modules (built per-platform; distributed via npm optionalDependencies)
 sdk/typescript/*.node
+sdk/python/python/agent_hooks/*.so
+sdk/python/python/agent_hooks/*.pyd
+*.abi3.so
 
 # Go
 sdk/go/**/*.test
