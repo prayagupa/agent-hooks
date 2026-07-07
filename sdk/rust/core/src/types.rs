@@ -170,10 +170,11 @@ impl Verdict {
                 return Err(HostError::VerdictInvalid);
             }
         }
+        // NB: an or-pattern guard applies to every alternative, so the
+        // two invalid shapes need separate arms (NOW-06).
         match (self.decision, &self.transform) {
-            (Decision::Transform, None) | (_, Some(_)) if self.decision != Decision::Transform => {
-                Err(HostError::VerdictInvalid)
-            }
+            (Decision::Transform, None) => Err(HostError::VerdictInvalid),
+            (d, Some(_)) if d != Decision::Transform => Err(HostError::VerdictInvalid),
             _ => Ok(()),
         }
     }
@@ -236,4 +237,39 @@ pub struct ApprovalResolution {
     pub outcome: ApprovalOutcome,
     pub context_identity: String,
     pub verdict: Option<Verdict>,
+}
+
+#[cfg(test)]
+mod verdict_validate_tests {
+    use super::*;
+
+    #[test]
+    fn transform_without_body_invalid() {
+        let v = Verdict {
+            decision: Decision::Transform,
+            ..Verdict::allow()
+        };
+        assert_eq!(v.validate(), Err(HostError::VerdictInvalid));
+    }
+
+    #[test]
+    fn body_on_non_transform_invalid() {
+        let v = Verdict {
+            transform: Some(Transform {
+                path: "$target.x".into(),
+                value: serde_json::json!(1),
+            }),
+            ..Verdict::allow()
+        };
+        assert_eq!(v.validate(), Err(HostError::VerdictInvalid));
+    }
+
+    #[test]
+    fn reserved_reason_invalid() {
+        let v = Verdict {
+            reason: Some("host_error:x".into()),
+            ..Verdict::allow()
+        };
+        assert_eq!(v.validate(), Err(HostError::VerdictInvalid));
+    }
 }
