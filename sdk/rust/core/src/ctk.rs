@@ -1,79 +1,116 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-//! Conformance Test Kit harness contract (§13.2).
+//! Conformance Test Kit runner for Rust-native hosts (§13.2).
 //!
-//! The Rust CTK runner is not yet implemented; this module defines the
-//! `Harness` trait so framework adapters can be written now. Track the
-//! runner at <https://github.com/responsibleai/agent-hooks/issues/2>;
-//! the Python implementation at `sdk/python/src/agent_hooks/ctk/runner.py`
-//! is the reference.
+//! The assertion engine, capability skip check, and scripted
+//! interceptor/resolver evaluation live in [`crate::ctk_engine`]; this
+//! module is the same thin glue the other SDK runners implement over
+//! the FFI — vector globbing, the recording wrapper, and the
+//! orchestration loop that drives the native [`Harness`]. The in-tree
+//! [`ReferenceHarness`] is the CTK self-test target.
 
-use crate::{EnforcementMode, Interceptor};
+use crate::ctk_engine::{
+    assert_vector, scripted_intercept, scripted_resolve, should_skip, IdentityPair, RunRecord,
+    VectorResult,
+};
+use crate::emitter::{InterceptionBlocked, InterceptionEmitter};
+use crate::types::{
+    AgentContext, ApprovalRequest, ApprovalResolution, ApprovalResolver, EnforcementMode,
+    Interceptor, Verdict,
+};
+use crate::AgentContextBuilder;
 use async_trait::async_trait;
-use serde::Deserialize;
-use serde_json::Value;
-use std::collections::HashSet;
+use serde_json::{json, Value};
+use std::path::Path;
+use std::sync::{Arc, Mutex};
 
-/// Host-declared capability subset (§3.2).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Capability {
-    ModelCalls,
-    ToolCalls,
-    ParallelToolCalls,
-    Streaming,
-    MultiTurn,
+/// Load all `AH-CTK-*.json` vectors from a directory, sorted by name.
+pub fn load_vectors(dir: impl AsRef<Path>) -> std::io::Result<Vec<Value>> {
+    let mut names: Vec<_> = std::fs::read_dir(dir)?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("AH-CTK-") && n.ends_with(".json"))
+        })
+        .collect();
+    names.sort();
+    names
+        .into_iter()
+        .map(|p| {
+            let text = std::fs::read_to_string(p)?;
+            serde_json::from_str(&text).map_err(std::io::Error::other)
+        })
+        .collect()
 }
 
-/// Outcome of one harness run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RunOutcome {
-    Completed,
-    Blocked,
-    Suspended,
-    Error,
+/// Replays one `interceptor_script` rule list via the CTK engine.
+struct ScriptedInterceptor {
+    rules: Vec<Value>,
+    /// When set, every received context is deep-copied here before rule
+    /// evaluation. Only the first-registered interceptor records:
+    /// `expect.interceptions` describes each emission as it saw it.
+    recorded: Option<Arc<Mutex<Vec<Value>>>>,
 }
 
-/// Hermetic scripted run loaded from a CTK vector. Wire-shaped.
-#[derive(Debug, Clone, Deserialize)]
-pub struct Scenario {
-    pub input: Value,
-    #[serde(default)]
-    pub tools: Vec<Value>,
-    #[serde(default)]
-    pub model_script: Vec<Value>,
-}
-
-/// What `Harness::run` returns to the CTK runner.
-#[derive(Debug, Clone)]
-pub struct RunRecord {
-    pub outcome: RunOutcome,
-    pub final_output: Option<Value>,
-    pub tool_invocations: Vec<Value>,
-    pub error: Option<String>,
-}
-
-/// Approval resolver supplied by the CTK (replays a vector's `approval_script`).
 #[async_trait]
-pub trait ApprovalResolver: Send + Sync {
-    async fn resolve(&self, request: crate::ApprovalRequest<'_>) -> crate::ApprovalResolution;
+impl Interceptor for ScriptedInterceptor {
+    async fn intercept(&self, context: &AgentContext) -> Verdict {
+        let ctx_value = Value::Object(context.clone());
+        if let Some(rec) = &self.recorded {
+            rec.lock().expect("recorder poisoned").push(ctx_value.clone());
+        }
+        let wire = scripted_intercept(&self.rules, &ctx_value);
+        crate::verdict_from_wire(&wire)
+            .expect("malformed interceptor_script return")
+    }
+}
+
+/// Replays a vector's `approval_script` via the CTK engine.
+struct ScriptedResolver {
+    rules: Vec<Value>,
+}
+
+#[async_trait]
+impl ApprovalResolver for ScriptedResolver {
+    async fn resolve(&self, request: ApprovalRequest<'_>) -> ApprovalResolution {
+        let ctx_value = Value::Object(request.context.clone());
+        let out = scripted_resolve(&self.rules, &ctx_value, &request.context_identity);
+        let outcome = match out["outcome"].as_str() {
+            Some("approve") => crate::ApprovalOutcome::Approve,
+            Some("reject") => crate::ApprovalOutcome::Reject,
+            _ => crate::ApprovalOutcome::Unresolved,
+        };
+        let verdict = out.get("verdict").map(|v| {
+            crate::verdict_from_wire(v).expect("malformed approval_script verdict")
+        });
+        ApprovalResolution {
+            outcome,
+            context_identity: out["context_identity"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned(),
+            verdict,
+        }
+    }
 }
 
 /// The single trait a framework adapter implements for the CTK.
 #[async_trait]
 pub trait Harness: Send {
-    /// Framework identifier (e.g., `"rig"`).
+    /// Framework identifier (e.g., `"reference-agent"`).
     fn name(&self) -> &str;
 
-    /// Capabilities this host supports (§3.2).
-    fn capabilities(&self) -> HashSet<Capability>;
+    /// Declared capability subset (§3.2), wire strings
+    /// (`"model_calls"`, `"tool_calls"`, …).
+    fn capabilities(&self) -> Vec<String>;
 
-    /// Wire mock model + tools from `scenario`, register `interceptor` and
-    /// `resolver`, and set enforcement mode.
+    /// Wire the scenario's mock model + tools into the framework,
+    /// register the interceptors and resolver, set the enforcement mode.
     fn setup(
         &mut self,
-        scenario: Scenario,
-        interceptor: Box<dyn Interceptor>,
+        scenario: Value,
+        interceptors: Vec<Box<dyn Interceptor>>,
         resolver: Option<Box<dyn ApprovalResolver>>,
         mode: EnforcementMode,
     );
@@ -83,4 +120,293 @@ pub trait Harness: Send {
 
     /// Tear down anything `setup` created.
     fn teardown(&mut self);
+}
+
+/// Run one vector against a harness and assert `expect` (§13.2).
+pub async fn run_vector(harness: &mut dyn Harness, vector: &Value) -> VectorResult {
+    let id = vector["id"].as_str().unwrap_or("").to_owned();
+    let title = vector["title"].as_str().unwrap_or("").to_owned();
+
+    let mut caps = harness.capabilities();
+    caps.sort();
+    let caps_ref: Vec<&str> = caps.iter().map(String::as_str).collect();
+    if let Some(detail) = should_skip(vector, &caps_ref) {
+        return VectorResult {
+            id,
+            title,
+            status: "skip",
+            detail,
+            failures: Vec::new(),
+        };
+    }
+
+    // Multi-interceptor vectors (§7.1 fold-through) use
+    // interceptor_scripts; single-interceptor vectors use
+    // interceptor_script. An empty interceptor_scripts registers zero
+    // interceptors (§7 fail-closed vector).
+    let scripts: Vec<Vec<Value>> = match vector.get("interceptor_scripts") {
+        Some(Value::Array(lists)) => lists
+            .iter()
+            .map(|l| l.as_array().cloned().unwrap_or_default())
+            .collect(),
+        _ => vec![vector["interceptor_script"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()],
+    };
+    let recorded = Arc::new(Mutex::new(Vec::new()));
+    let interceptors: Vec<Box<dyn Interceptor>> = scripts
+        .into_iter()
+        .enumerate()
+        .map(|(i, rules)| {
+            Box::new(ScriptedInterceptor {
+                rules,
+                recorded: (i == 0).then(|| Arc::clone(&recorded)),
+            }) as Box<dyn Interceptor>
+        })
+        .collect();
+
+    let resolver: Option<Box<dyn ApprovalResolver>> = match vector.get("approval_script") {
+        Some(Value::Array(rules)) if !rules.is_empty() => Some(Box::new(ScriptedResolver {
+            rules: rules.clone(),
+        })),
+        _ => None,
+    };
+    let mode = match vector.get("mode").and_then(Value::as_str) {
+        Some("evaluate_only") => EnforcementMode::EvaluateOnly,
+        _ => EnforcementMode::Enforce,
+    };
+
+    harness.setup(vector["scenario"].clone(), interceptors, resolver, mode);
+    let rr = harness.run().await;
+    harness.teardown();
+
+    let recorded = recorded.lock().expect("recorder poisoned").clone();
+    assert_vector(vector, &recorded, &rr)
+}
+
+// ---- reference harness ------------------------------------------------------
+
+/// Minimal conformant in-memory agent loop; the CTK self-test target.
+#[derive(Default)]
+pub struct ReferenceHarness {
+    scenario: Value,
+    emitter: Option<InterceptionEmitter>,
+    builder: Option<AgentContextBuilder>,
+    tool_log: Vec<Value>,
+    session_counter: u64,
+}
+
+impl ReferenceHarness {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn invoke_tool(&self, name: &str, args: &Value) -> (Value, bool) {
+        let tools = self.scenario["tools"].as_array().cloned().unwrap_or_default();
+        let spec = tools
+            .iter()
+            .find(|t| t["name"].as_str() == Some(name))
+            .unwrap_or_else(|| panic!("tool {name} not in scenario"));
+        for behavior in spec["behavior"].as_array().into_iter().flatten() {
+            let matched = match behavior.get("when_args") {
+                None => true,
+                Some(w) => w == args,
+            };
+            if matched {
+                return (
+                    behavior["return"].clone(),
+                    behavior
+                        .get("is_error")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                );
+            }
+        }
+        panic!("tool {name} invoked with {args}: no matching behavior");
+    }
+
+    /// The agent loop proper; a block verdict unwinds via `Err`.
+    async fn run_inner(&mut self) -> Result<Value, InterceptionBlocked> {
+        let scenario = self.scenario.clone();
+        let mut final_output = Value::Null;
+
+        let mut tool_names: Vec<String> = scenario["tools"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|t| t["name"].as_str().map(str::to_owned))
+            .collect();
+        tool_names.sort();
+
+        let mut ctx = self
+            .builder
+            .as_mut()
+            .expect("setup")
+            .agent_startup(tool_names);
+        self.emitter.as_mut().expect("setup").emit(&mut ctx).await?;
+
+        let input = &scenario["input"];
+        let content = input["content"].clone();
+        let role = input["role"].as_str().unwrap_or("user").to_owned();
+        let mut ctx = self
+            .builder
+            .as_mut()
+            .expect("setup")
+            .input(content.clone(), &role);
+        self.emitter.as_mut().expect("setup").emit(&mut ctx).await?;
+
+        let mut messages = vec![json!({ "role": role, "content": content })];
+
+        for step in scenario["model_script"].as_array().into_iter().flatten() {
+            let resp = &step["respond"];
+
+            let mut ctx = self
+                .builder
+                .as_mut()
+                .expect("setup")
+                .pre_model_call("mock", messages.clone());
+            self.emitter.as_mut().expect("setup").emit(&mut ctx).await?;
+            // may be transformed (§4.3)
+            messages = ctx["messages"].as_array().cloned().unwrap_or(messages);
+
+            let tool_calls = resp["tool_calls"].as_array().cloned().unwrap_or_default();
+            let mut ctx = self.builder.as_mut().expect("setup").post_model_call(
+                "mock",
+                resp["content"].clone(),
+                tool_calls.clone(),
+                resp["finish_reason"].as_str().unwrap_or(""),
+            );
+            self.emitter.as_mut().expect("setup").emit(&mut ctx).await?;
+
+            if tool_calls.is_empty() {
+                final_output = resp["content"].clone();
+                break;
+            }
+            for tc in &tool_calls {
+                match self.do_tool_call(tc).await {
+                    Ok(tool_msg) => messages.push(tool_msg),
+                    Err(blocked) => messages.push(json!({
+                        "role": "tool",
+                        "content": format!(
+                            "blocked: {}",
+                            blocked.record.verdict.reason.as_deref().unwrap_or("")
+                        ),
+                    })),
+                }
+            }
+            let assistant_content = if resp["content"].is_null() {
+                json!("")
+            } else {
+                resp["content"].clone()
+            };
+            messages.push(json!({ "role": "assistant", "content": assistant_content }));
+        }
+
+        if !final_output.is_null() {
+            let mut ctx = self
+                .builder
+                .as_mut()
+                .expect("setup")
+                .output(final_output);
+            self.emitter.as_mut().expect("setup").emit(&mut ctx).await?;
+            final_output = ctx["output"]["content"].clone();
+        }
+        Ok(final_output)
+    }
+
+    async fn do_tool_call(&mut self, tc: &Value) -> Result<Value, InterceptionBlocked> {
+        let id = tc["id"].as_str().unwrap_or("").to_owned();
+        let name = tc["name"].as_str().unwrap_or("").to_owned();
+        let mut ctx = self
+            .builder
+            .as_mut()
+            .expect("setup")
+            .pre_tool_call(&id, &name, tc["args"].clone());
+        self.emitter.as_mut().expect("setup").emit(&mut ctx).await?;
+        let args = ctx["tool_call"]["args"].clone(); // post-transform (§4.3)
+
+        let (value, is_error) = self.invoke_tool(&name, &args);
+        self.tool_log.push(json!({ "name": name, "args": args }));
+
+        let mut ctx = self.builder.as_mut().expect("setup").post_tool_call(
+            &id,
+            &name,
+            args,
+            value.clone(),
+            is_error,
+        );
+        self.emitter.as_mut().expect("setup").emit(&mut ctx).await?;
+        Ok(json!({ "role": "tool", "content": value }))
+    }
+}
+
+#[async_trait]
+impl Harness for ReferenceHarness {
+    fn name(&self) -> &str {
+        "reference-agent"
+    }
+
+    fn capabilities(&self) -> Vec<String> {
+        vec!["model_calls".into(), "tool_calls".into()]
+    }
+
+    fn setup(
+        &mut self,
+        scenario: Value,
+        interceptors: Vec<Box<dyn Interceptor>>,
+        resolver: Option<Box<dyn ApprovalResolver>>,
+        mode: EnforcementMode,
+    ) {
+        self.scenario = scenario;
+        self.tool_log.clear();
+        self.session_counter += 1;
+        let mut emitter = InterceptionEmitter::new(mode, resolver);
+        for interceptor in interceptors {
+            emitter.register(interceptor);
+        }
+        self.emitter = Some(emitter);
+        self.builder = Some(AgentContextBuilder::new(
+            "ref-agent",
+            "reference-agent",
+            &format!("sess-{}", self.session_counter),
+        ));
+    }
+
+    async fn run(&mut self) -> RunRecord {
+        let (outcome, final_output) = match self.run_inner().await {
+            Ok(v) => ("completed", v),
+            Err(_) => ("blocked", Value::Null),
+        };
+
+        let mut ctx = self.builder.as_mut().expect("setup").agent_shutdown(
+            if outcome == "completed" {
+                "completed"
+            } else {
+                "error"
+            },
+        );
+        let emitter = self.emitter.as_mut().expect("setup");
+        emitter.emit_unchecked(&mut ctx).await;
+
+        RunRecord {
+            outcome: outcome.to_owned(),
+            final_output,
+            tool_invocations: self.tool_log.clone(),
+            error: None,
+            identities: emitter
+                .records()
+                .iter()
+                .map(|r| IdentityPair {
+                    input_identity: r.input_identity.clone(),
+                    enforced_identity: r.enforced_identity.clone(),
+                })
+                .collect(),
+        }
+    }
+
+    fn teardown(&mut self) {
+        self.emitter = None;
+        self.builder = None;
+    }
 }

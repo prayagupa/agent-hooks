@@ -57,7 +57,7 @@ class MyFrameworkHarness(Harness):
 
 Equivalent interfaces ship in `sdk/typescript/src/ctk/harness.ts`,
 `sdk/dotnet/src/AgentHooks.Conformance/IHarness.cs`,
-`sdk/go/conformance/harness.go`, and `sdk/rust/conformance/src/harness.rs`.
+`sdk/go/conformance/harness.go`, and `sdk/rust/core/src/ctk.rs (`ctk` feature)`.
 
 ## Mock model
 

@@ -57,6 +57,17 @@ pub enum Decision {
 }
 
 impl Decision {
+    /// Wire name (snake_case).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Allow => "allow",
+            Self::Deny => "deny",
+            Self::Warn => "warn",
+            Self::Escalate => "escalate",
+            Self::Transform => "transform",
+        }
+    }
+
     /// Whether the action proceeds under this decision (§2 permit class).
     pub fn permits(self) -> bool {
         matches!(self, Self::Allow | Self::Warn | Self::Transform)
@@ -237,6 +248,14 @@ pub struct ApprovalResolution {
     pub outcome: ApprovalOutcome,
     pub context_identity: String,
     pub verdict: Option<Verdict>,
+}
+
+/// Host-registered resolver for `escalate` verdicts (§9).
+#[async_trait]
+pub trait ApprovalResolver: Send + Sync {
+    /// Resolve an escalation. The returned resolution's
+    /// `context_identity` MUST echo the request's (§9).
+    async fn resolve(&self, request: ApprovalRequest<'_>) -> ApprovalResolution;
 }
 
 #[cfg(test)]

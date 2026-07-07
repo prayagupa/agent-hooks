@@ -17,8 +17,11 @@ the security-relevant primitives have exactly one implementation:
 
 What stays per-language: the `Interceptor` callback protocol, the
 `AgentContextBuilder` convenience helper, exception/error types, and the
-CTK `Harness` glue. Anything that calls back into user code cannot cross
-the FFI boundary.
+CTK `Harness` glue — anything that calls back into user code. For
+Rust-native hosts these live in the core crate itself
+(`InterceptionEmitter`, `AgentContextBuilder`, `ctk::ReferenceHarness`
+behind the `ctk` feature); the other languages implement them over the
+FFI.
 
 ## FFI surface
 
