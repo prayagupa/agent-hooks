@@ -3,7 +3,16 @@
 version = 4
 
 [[package]]
-name = "agent-hooks"
+name = "agent-hooks-python"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "agenthooks",
+ "pyo3",
+ "pyo3-build-config",
+]
+
+[[package]]
+name = "agenthooks"
 version = "0.1.0-alpha.1"
 dependencies = [
  "async-trait",
@@ -12,15 +21,6 @@ dependencies = [
  "serde_json",
  "sha2",
  "thiserror",
-]
-
-[[package]]
-name = "agent-hooks-python"
-version = "0.1.0-alpha.1"
-dependencies = [
- "agent-hooks",
- "pyo3",
- "pyo3-build-config",
 ]
 
 [[package]]

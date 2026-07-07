@@ -11,7 +11,7 @@ name = "_core"
 crate-type = ["cdylib"]
 
 [dependencies]
-agent-hooks = { path = "../rust/core" }
+agenthooks = { path = "../rust/core" }
 pyo3 = { version = "0.29", features = ["extension-module", "abi3-py310"] }
 
 [build-dependencies]

@@ -1,5 +1,8 @@
 [package]
-name = "agent-hooks"
+# Distribution name: "agent-hooks" is taken on crates.io by an
+# unrelated project. The lib name stays agent_hooks so `use agent_hooks`
+# is unchanged.
+name = "agenthooks"
 description = "Framework-neutral agent control contract (AGENT-HOOKS-0.1). Canonical Rust core; other SDKs bind to this crate."
 keywords = ["ai-agents", "governance", "interception", "control"]
 categories = ["api-bindings"]
@@ -8,6 +11,9 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+
+[lib]
+name = "agent_hooks"
 
 [dependencies]
 serde = { workspace = true }

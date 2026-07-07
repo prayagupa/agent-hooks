@@ -3,7 +3,17 @@
 version = 4
 
 [[package]]
-name = "agent-hooks"
+name = "agent-hooks-node"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "agenthooks",
+ "napi",
+ "napi-build",
+ "napi-derive",
+]
+
+[[package]]
+name = "agenthooks"
 version = "0.1.0-alpha.1"
 dependencies = [
  "async-trait",
@@ -12,16 +22,6 @@ dependencies = [
  "serde_json",
  "sha2",
  "thiserror",
-]
-
-[[package]]
-name = "agent-hooks-node"
-version = "0.1.0-alpha.1"
-dependencies = [
- "agent-hooks",
- "napi",
- "napi-build",
- "napi-derive",
 ]
 
 [[package]]

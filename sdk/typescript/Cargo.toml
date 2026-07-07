@@ -11,7 +11,7 @@ path = "native/lib.rs"
 crate-type = ["cdylib"]
 
 [dependencies]
-agent-hooks = { path = "../rust/core" }
+agenthooks = { path = "../rust/core" }
 napi = { version = "2", default-features = false, features = ["napi8"] }
 napi-derive = "2"
 

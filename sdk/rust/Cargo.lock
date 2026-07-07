@@ -3,7 +3,14 @@
 version = 3
 
 [[package]]
-name = "agent-hooks"
+name = "agent-hooks-ffi"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "agenthooks",
+]
+
+[[package]]
+name = "agenthooks"
 version = "0.1.0-alpha.1"
 dependencies = [
  "async-trait",
@@ -13,13 +20,6 @@ dependencies = [
  "sha2",
  "thiserror",
  "tokio",
-]
-
-[[package]]
-name = "agent-hooks-ffi"
-version = "0.1.0-alpha.1"
-dependencies = [
- "agent-hooks",
 ]
 
 [[package]]
