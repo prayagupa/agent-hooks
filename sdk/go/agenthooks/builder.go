@@ -17,7 +17,7 @@ import "time"
 type AgentContextBuilder struct {
 	agent   map[string]any
 	session map[string]any
-	seq     int
+	seq     int64 // assigned via atomic.AddInt64 (§12.2.3)
 	l2      map[string]any
 }
 
@@ -70,7 +70,7 @@ func (b *AgentContextBuilder) envelope(ip InterceptionPoint, target any) AgentCo
 		"spec":               SpecVersion,
 		"interception_point": string(ip),
 		"timestamp":          nowRFC3339(),
-		"sequence":           b.seq,
+		"sequence":           atomic.AddInt64(&b.seq, 1) - 1,
 		"agent":              cloneMap(b.agent),
 		"session":            cloneMap(b.session),
 		"target":             target,
@@ -78,7 +78,6 @@ func (b *AgentContextBuilder) envelope(ip InterceptionPoint, target any) AgentCo
 	for k, v := range b.l2 {
 		ctx[k] = v
 	}
-	b.seq++
 	return ctx
 }
 

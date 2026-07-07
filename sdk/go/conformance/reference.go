@@ -163,8 +163,9 @@ func (h *ReferenceHarness) Run(ctx context.Context) (RunRecord, error) {
 		return RunRecord{}, err
 	}
 
-	ids := make([]IdentityPair, len(em.Records))
-	for i, r := range em.Records {
+	recs := em.Records()
+	ids := make([]IdentityPair, len(recs))
+	for i, r := range recs {
 		ids[i] = IdentityPair{InputIdentity: r.InputIdentity, EnforcedIdentity: r.EnforcedIdentity}
 	}
 	return RunRecord{

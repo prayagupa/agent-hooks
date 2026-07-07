@@ -21,6 +21,10 @@
  * {@link InterceptionEmitter.emit} **throws** {@link InterceptionBlocked}
  * on any block — the ignorable-result variant is the explicitly named
  * {@link InterceptionEmitter.emitUnchecked}.
+ *
+ * Concurrency (§12.2): emissions for different tool calls may interleave
+ * on the event loop; sequence assignment and record append are atomic on
+ * a single JS thread. Sharing one emitter across workers is unsupported.
  */
 
 import {

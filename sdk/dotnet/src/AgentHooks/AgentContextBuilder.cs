@@ -9,6 +9,8 @@
 
 using System.Text.Json.Nodes;
 
+using System.Threading;
+
 namespace AgentHooks;
 
 /// <summary>Stateful per-session builder for <see cref="AgentContext"/> values.
@@ -18,7 +20,7 @@ public sealed class AgentContextBuilder
     private readonly JsonObject _agent;
     private readonly JsonObject _session;
     private readonly Dictionary<string, JsonNode?> _l2 = [];
-    private int _seq;
+    private int _seq = -1; // advanced via Interlocked.Increment (§12.2.3)
 
     public AgentContextBuilder(
         string agentId,
@@ -53,13 +55,12 @@ public sealed class AgentContextBuilder
             ["spec"] = Spec.Version,
             ["interception_point"] = ip.ToWireName(),
             ["timestamp"] = Now(),
-            ["sequence"] = _seq,
+            ["sequence"] = Interlocked.Increment(ref _seq),
             ["agent"] = _agent.DeepClone(),
             ["session"] = _session.DeepClone(),
             ["target"] = target?.DeepClone(),
         };
         foreach (var (k, v) in _l2) ctx[k] = v?.DeepClone();
-        _seq++;
         return ctx;
     }
 

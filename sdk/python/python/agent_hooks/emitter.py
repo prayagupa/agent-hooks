@@ -20,6 +20,11 @@ interceptors yields ``deny host_error:no_interceptor`` (§7), and
 :meth:`InterceptionEmitter.emit` **raises** :class:`InterceptionBlocked`
 on any block — the ignorable-result variant is the explicitly named
 :meth:`emit_unchecked`.
+
+Concurrency (§12.2): emissions for different tool calls may interleave
+on the event loop; ``sequence`` assignment and record append are atomic
+under a single-threaded asyncio runtime. Sharing one emitter across OS
+threads is not supported.
 """
 from __future__ import annotations
 

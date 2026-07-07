@@ -669,10 +669,24 @@ incorporate the partial response.
 
 ### 12.2 Parallel tool calls
 
-When a model response carries N tool calls that the host invokes concurrently,
-the host MUST emit N independent `pre_tool_call`/`post_tool_call` pairs, each
-with a distinct `tool_call.id`. The host MAY interleave them. `sequence` MUST
-remain strictly increasing across the interleaving.
+When a model response carries N tool calls, the host MAY invoke the
+tools concurrently. The contract is per tool call, not per batch:
+
+1. Each tool call MUST be bracketed by its own
+   `pre_tool_call`/`post_tool_call` pair sharing one distinct
+   `tool_call.id`; the tool MUST NOT start before its `pre_tool_call`
+   fold completes and `post_tool_call` MUST NOT be emitted before the
+   tool returns.
+2. Emissions belonging to *different* tool calls MAY proceed
+   concurrently and MAY interleave. Within a single emission the §7.1
+   fold remains strictly sequential.
+3. `sequence` values MUST be unique and totally ordered within the
+   session; hosts MUST assign them atomically (they establish the
+   audit order of records under concurrency).
+4. Interceptors MUST tolerate concurrent invocation across emissions
+   within a session. A stateful interceptor (rate limiter, budget
+   counter) owns its own synchronization; the host does not serialize
+   emissions on its behalf.
 
 ---
 

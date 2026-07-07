@@ -44,7 +44,15 @@ public sealed class InterceptionEmitter
     public EnforcementMode Mode => _mode;
 
     /// <summary>All interception records emitted so far in this session, in order.</summary>
-    public IReadOnlyList<InterceptionRecord> Records => _records;
+    private readonly object _recordsLock = new();
+
+    /// <summary>Snapshot of every record emitted so far, in sequence
+    /// order. Emissions for different tool calls may run concurrently
+    /// (§12.2), so the backing list is lock-guarded.</summary>
+    public IReadOnlyList<InterceptionRecord> Records
+    {
+        get { lock (_recordsLock) return _records.ToList(); }
+    }
 
     public InterceptionEmitter Register(IInterceptor interceptor)
     {
@@ -92,7 +100,7 @@ public sealed class InterceptionEmitter
             _mode == EnforcementMode.Enforce ? "enforce" : "evaluate_only",
             inputId);
         var record = RecordFromCore((JsonObject)JsonNode.Parse(recordJson)!);
-        _records.Add(record);
+        lock (_recordsLock) _records.Add(record);
         return record;
     }
 

@@ -23,6 +23,7 @@ package agenthooks
 // variant is the explicitly named EmitUnchecked.
 
 import (
+	"sync"
 	"context"
 	"encoding/json"
 	"errors"
@@ -35,8 +36,21 @@ type InterceptionEmitter struct {
 	interceptors []Interceptor
 	resolver     ApprovalResolver
 	mode         EnforcementMode
-	// Records holds every InterceptionRecord emitted so far, in order.
-	Records []InterceptionRecord
+
+	mu sync.Mutex
+	// records holds every InterceptionRecord emitted so far, in
+	// sequence order. Guarded by mu: emissions for different tool
+	// calls may run concurrently (§12.2).
+	records []InterceptionRecord
+}
+
+// Records returns a snapshot of every InterceptionRecord emitted so far.
+func (e *InterceptionEmitter) Records() []InterceptionRecord {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	out := make([]InterceptionRecord, len(e.records))
+	copy(out, e.records)
+	return out
 }
 
 // NewInterceptionEmitter constructs an emitter in the given mode with an
@@ -116,7 +130,9 @@ func (e *InterceptionEmitter) EmitUnchecked(ctx context.Context, actx AgentConte
 	if err := json.Unmarshal([]byte(recJSON), &rec); err != nil {
 		return InterceptionRecord{}, err
 	}
-	e.Records = append(e.Records, rec)
+	e.mu.Lock()
+	e.records = append(e.records, rec)
+	e.mu.Unlock()
 	return rec, nil
 }
 
