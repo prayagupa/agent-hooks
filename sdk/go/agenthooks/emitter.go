@@ -141,7 +141,7 @@ func (e *InterceptionEmitter) dispatch(ctx context.Context, actx AgentContext) V
 		}
 		v, err := ic.OnHook(ctx, cp)
 		if err != nil {
-			return HostErrorVerdict(ErrInterceptorFailed, fmt.Sprintf("%v", err)) // §6.3
+			return HostErrorVerdict(ErrInterceptorFailed, fmt.Sprintf("%T", err)) // §6.3
 		}
 		vb, err := json.Marshal(v)
 		if err != nil {
@@ -222,7 +222,7 @@ func (e *InterceptionEmitter) resolveEscalate(
 		Context:           actx,
 	})
 	if err != nil {
-		return HostErrorVerdict(ErrApprovalResolverFailed, fmt.Sprintf("%v", err))
+		return HostErrorVerdict(ErrApprovalResolverFailed, fmt.Sprintf("%T", err))
 	}
 	if res.ContextIdentity != identity {
 		return HostErrorVerdict(ErrApprovalActionMismatch, "")
