@@ -2,20 +2,24 @@
 # Changes to any of these paths alter the wire contract or the
 # conformance definition and MUST NOT merge without review.
 
-/spec/                          @responsibleai/agent-hooks-spec
-/conformance/                   @responsibleai/agent-hooks-spec
-/SECURITY.md                    @responsibleai/agent-hooks-spec
-/ARCHITECTURE.md                @responsibleai/agent-hooks-spec
-/VERSIONING.md                  @responsibleai/agent-hooks-spec
+/spec/                          @MohammadHaroonAbuomar
+/conformance/                   @MohammadHaroonAbuomar
+/SECURITY.md                    @MohammadHaroonAbuomar
+/ARCHITECTURE.md                @MohammadHaroonAbuomar
+/VERSIONING.md                  @MohammadHaroonAbuomar
 
 # The Rust core is the single implementation every SDK binds to.
-/sdk/rust/core/                 @responsibleai/agent-hooks-spec
-/sdk/rust/ffi/                  @responsibleai/agent-hooks-spec
+/sdk/rust/core/                 @MohammadHaroonAbuomar
+/sdk/rust/ffi/                  @MohammadHaroonAbuomar
 
 # Per-language SDK owners (bindings, packaging, CI for that language).
-/sdk/python/                    @responsibleai/agent-hooks-sdk
-/sdk/typescript/                @responsibleai/agent-hooks-sdk
-/sdk/dotnet/                    @responsibleai/agent-hooks-sdk
-/sdk/go/                        @responsibleai/agent-hooks-sdk
+/sdk/python/                    @MohammadHaroonAbuomar
+/sdk/typescript/                @MohammadHaroonAbuomar
+/sdk/dotnet/                    @MohammadHaroonAbuomar
+/sdk/go/                        @MohammadHaroonAbuomar
 
-/.github/                       @responsibleai/agent-hooks-spec
+/.github/                       @MohammadHaroonAbuomar
+
+# Catch-all: everything not matched above (NOW-02).
+*                               @MohammadHaroonAbuomar
+/scripts/                       @MohammadHaroonAbuomar
