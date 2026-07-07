@@ -145,7 +145,7 @@ func (e *InterceptionEmitter) dispatch(ctx context.Context, actx AgentContext) V
 		}
 		vb, err := json.Marshal(v)
 		if err != nil {
-			return HostErrorVerdict(ErrInterceptorFailed, err.Error())
+			return HostErrorVerdict(ErrInterceptorFailed, fmt.Sprintf("%T", err))
 		}
 		if _, err := nativeValidateVerdict(string(vb)); err != nil { // §5
 			return coreErrVerdict(err, ErrVerdictInvalid)

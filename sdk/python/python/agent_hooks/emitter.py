@@ -139,7 +139,7 @@ class InterceptionEmitter:
                     HostError(getattr(e, "code", HostError.VERDICT_INVALID.value)), str(e)
                 )
             except Exception as e:  # noqa: BLE001 — fail closed per §6.3
-                return Verdict.host_error(HostError.INTERCEPTOR_FAILED, repr(e))
+                return Verdict.host_error(HostError.INTERCEPTOR_FAILED, type(e).__name__)
 
             if v.decision.blocks:
                 return v  # first block short-circuits (§7.1)
@@ -189,7 +189,7 @@ class InterceptionEmitter:
                 )
             )
         except Exception as e:  # noqa: BLE001
-            return Verdict.host_error(HostError.APPROVAL_RESOLVER_FAILED, repr(e))
+            return Verdict.host_error(HostError.APPROVAL_RESOLVER_FAILED, type(e).__name__)
         if res.context_identity != identity:
             return Verdict.host_error(HostError.APPROVAL_ACTION_MISMATCH)
         if res.outcome is ApprovalOutcome.UNRESOLVED or res.verdict is None:

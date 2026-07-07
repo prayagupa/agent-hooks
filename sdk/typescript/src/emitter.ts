@@ -118,7 +118,7 @@ export class InterceptionEmitter {
         if (e instanceof AgentHooksCoreError) {
           return hostErrorVerdict(e.code as HostError, e.message);
         }
-        return hostErrorVerdict(HostError.InterceptorFailed, String(e));
+        return hostErrorVerdict(HostError.InterceptorFailed, (e as Error)?.constructor?.name ?? "Error");
       }
 
       if (v.decision === Decision.Deny || v.decision === Decision.Escalate) {
@@ -174,7 +174,7 @@ export class InterceptionEmitter {
         context: ctx,
       });
     } catch (e) {
-      return hostErrorVerdict(HostError.ApprovalResolverFailed, String(e));
+      return hostErrorVerdict(HostError.ApprovalResolverFailed, (e as Error)?.constructor?.name ?? "Error");
     }
     if (res.context_identity !== identity) {
       return hostErrorVerdict(HostError.ApprovalActionMismatch);

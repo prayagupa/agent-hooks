@@ -125,7 +125,7 @@ public sealed class InterceptionEmitter
             }
             catch (Exception e) // fail closed per §6.3
             {
-                return Verdict.FromHostError(HostError.InterceptorFailed, e.ToString());
+                return Verdict.FromHostError(HostError.InterceptorFailed, e.GetType().Name);
             }
 
             if (!v.Decision.Permits())
@@ -183,7 +183,7 @@ public sealed class InterceptionEmitter
         }
         catch (Exception e)
         {
-            return Verdict.FromHostError(HostError.ApprovalResolverFailed, e.ToString());
+            return Verdict.FromHostError(HostError.ApprovalResolverFailed, e.GetType().Name);
         }
         if (res.ContextIdentity != identity)
             return Verdict.FromHostError(HostError.ApprovalActionMismatch);
