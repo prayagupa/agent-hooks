@@ -5,8 +5,9 @@ interception-point enums, `AgentContext` builder, `Verdict` types, host-side
 `InterceptionEmitter`, and the Conformance Test Kit.
 
 ```bash
-pip install agent-hooks          # types + emitter
-pip install agent-hooks[ctk]     # + jsonschema + pytest plugin
+# Not yet on PyPI (the name "agent-hooks" is held by an unrelated
+# project; distribution rename pending). Install from source:
+pip install "agent-hooks @ git+https://github.com/responsibleai/agent-hooks#subdirectory=sdk/python"
 ```
 
 ## Host (framework adapter) usage

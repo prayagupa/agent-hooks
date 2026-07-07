@@ -77,8 +77,9 @@ in any SDK; register with the host.
 **Prove conformance:**
 
 ```bash
-cd sdk/python
-pip install -e .[ctk]
+# Not yet published to package registries; the PyPI name "agent-hooks"
+# is held by an unrelated project (distribution rename pending).
+pip install "agent-hooks[ctk] @ git+https://github.com/responsibleai/agent-hooks#subdirectory=sdk/python"
 pytest --agent-hooks-harness=your_pkg:YourHarness
 ```
 
