@@ -10,7 +10,7 @@ export declare function validateVerdict(verdictJson: string): string
 export declare function applyTransform(targetJson: string, path: string, valueJson: string): string
 export declare function applyTransformCtx(ctxJson: string, path: string, valueJson: string): string
 export declare function validateTransformCtx(ctxJson: string, path: string, valueJson: string): string
-export declare function finalize(ctxJson: string, verdictJson: string, mode: string, inputIdentity: string): string
+export declare function finalize(ctxJson: string, verdictJson: string, mode: string, inputIdentity: string, decidedBy: number): string
 export declare function ctkScriptedIntercept(rulesJson: string, ctxJson: string): string
 export declare function ctkScriptedResolve(rulesJson: string, ctxJson: string, identity: string): string
 export declare function ctkShouldSkip(vectorJson: string, harnessCapsJson: string): string

@@ -150,6 +150,13 @@ type InterceptionRecord struct {
 	Verdict           Verdict           `json:"verdict"`
 	InputIdentity     string            `json:"input_identity"`
 	EnforcedIdentity  string            `json:"enforced_identity"`
+	// SessionID is ctx.session.id — correlates records across a session.
+	SessionID string `json:"session_id"`
+	// Sequence is ctx.sequence — total order within the session (§12.2.3).
+	Sequence int64 `json:"sequence"`
+	// DecidedBy is the registration index of the deciding interceptor;
+	// nil for a pure allow or a host-synthesized host_error:* verdict.
+	DecidedBy *int `json:"decided_by"`
 }
 
 // Proceeds reports whether the guarded action executes (§6, §8).

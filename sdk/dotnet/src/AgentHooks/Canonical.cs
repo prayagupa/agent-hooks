@@ -54,10 +54,12 @@ public static class Canonical
     /// <summary>§6/§10: build the <c>InterceptionRecord</c> for one completed
     /// interception. Rust core.</summary>
     public static JsonObject Finalize(
-        AgentContext ctx, JsonNode verdict, EnforcementMode mode, string inputIdentity) =>
+        AgentContext ctx, JsonNode verdict, EnforcementMode mode, string inputIdentity,
+        int? decidedBy = null) =>
         (JsonObject)JsonNode.Parse(Native.Finalize(
             ctx.Json.ToJsonString(Compact),
             verdict.ToJsonString(Compact),
             mode == EnforcementMode.Enforce ? "enforce" : "evaluate_only",
-            inputIdentity))!;
+            inputIdentity,
+            decidedBy ?? -1))!;
 }

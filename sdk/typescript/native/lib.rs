@@ -70,8 +70,9 @@ pub fn finalize(
     verdict_json: String,
     mode: String,
     input_identity: String,
+    decided_by: i64,
 ) -> Result<String> {
-    core::finalize(&ctx_json, &verdict_json, &mode, &input_identity).map_err(map_err)
+    core::finalize(&ctx_json, &verdict_json, &mode, &input_identity, decided_by).map_err(map_err)
 }
 
 // ---- CTK engine (§13.2) ---------------------------------------------------

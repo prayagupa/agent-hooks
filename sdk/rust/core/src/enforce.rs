@@ -84,14 +84,25 @@ pub fn finalize(
     verdict: Verdict,
     mode: EnforcementMode,
     input_identity: &str,
+    decided_by: Option<u32>,
 ) -> InterceptionRecord {
     let ip = interception_point_of(ctx).unwrap_or(InterceptionPoint::AgentStartup);
+    let session_id = ctx
+        .get("session")
+        .and_then(|s| s.get("id"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let sequence = ctx.get("sequence").and_then(Value::as_i64).unwrap_or(-1);
     InterceptionRecord {
         interception_point: ip,
         mode,
         verdict,
         input_identity: input_identity.to_owned(),
         enforced_identity: context_identity(ctx),
+        session_id,
+        sequence,
+        decided_by,
     }
 }
 
@@ -150,7 +161,7 @@ mod tests {
     fn allow_identities_equal() {
         let c = ctx("pre_tool_call", json!({"url": "x"}));
         let input_id = context_identity(&c);
-        let r = finalize(&c, Verdict::allow(), EnforcementMode::Enforce, &input_id);
+        let r = finalize(&c, Verdict::allow(), EnforcementMode::Enforce, &input_id, None);
         assert_eq!(r.input_identity, r.enforced_identity);
         assert!(r.proceeds());
     }
@@ -171,7 +182,7 @@ mod tests {
             transform: Some(t),
             ..Verdict::allow()
         };
-        let r = finalize(&c, v, EnforcementMode::Enforce, &input_id);
+        let r = finalize(&c, v, EnforcementMode::Enforce, &input_id, None);
         assert_ne!(r.input_identity, r.enforced_identity);
     }
 

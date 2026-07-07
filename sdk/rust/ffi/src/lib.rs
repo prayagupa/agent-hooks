@@ -164,12 +164,14 @@ pub unsafe extern "C" fn ah_finalize(
     verdict_json: *const c_char,
     mode: *const c_char,
     input_identity: *const c_char,
+    decided_by: i64,
 ) -> *mut AhResult {
     boxed(core::finalize(
         from_c(ctx_json),
         from_c(verdict_json),
         from_c(mode),
         from_c(input_identity),
+        decided_by,
     ))
 }
 

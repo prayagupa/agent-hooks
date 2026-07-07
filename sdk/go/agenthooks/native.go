@@ -125,7 +125,8 @@ func nativeValidateTransformCtx(ctxJSON, path, valueJSON string) (string, error)
 // nativeFinalize builds the InterceptionRecord for one completed
 // interception (§6/§10). inputIdentity MUST have been computed from the
 // context before interceptor dispatch.
-func nativeFinalize(ctxJSON, verdictJSON, mode, inputIdentity string) (string, error) {
+// decidedBy: registration index of the deciding interceptor; -1 = none.
+func nativeFinalize(ctxJSON, verdictJSON, mode, inputIdentity string, decidedBy int64) (string, error) {
 	cc, fc := cstr(ctxJSON)
 	defer fc()
 	cv, fv := cstr(verdictJSON)
@@ -134,7 +135,7 @@ func nativeFinalize(ctxJSON, verdictJSON, mode, inputIdentity string) (string, e
 	defer fm()
 	ci, fi := cstr(inputIdentity)
 	defer fi()
-	return unwrap(C.ah_finalize(cc, cv, cm, ci))
+	return unwrap(C.ah_finalize(cc, cv, cm, ci, C.int64_t(decidedBy)))
 }
 
 // ---- CTK engine (§13.2) ---------------------------------------------------

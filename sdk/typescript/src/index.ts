@@ -134,6 +134,13 @@ export interface InterceptionRecord {
   verdict: Verdict;
   input_identity: string;
   enforced_identity: string;
+  /** `ctx.session.id` — correlates records across a session. */
+  session_id: string;
+  /** `ctx.sequence` — total order within the session (§12.2.3). */
+  sequence: number;
+  /** Registration index of the deciding interceptor; `null` for a pure
+   * allow or a host-synthesized `host_error:*` verdict. */
+  decided_by: number | null;
 }
 
 /** Whether the guarded action executes (§6, §8). */
@@ -222,9 +229,16 @@ export function finalize(
   verdict: Verdict,
   mode: EnforcementMode,
   inputIdentity: string,
+  decidedBy: number | null = null,
 ): InterceptionRecord {
   return JSON.parse(
-    native.finalize(JSON.stringify(ctx), JSON.stringify(verdict), mode, inputIdentity),
+    native.finalize(
+      JSON.stringify(ctx),
+      JSON.stringify(verdict),
+      mode,
+      inputIdentity,
+      decidedBy ?? -1,
+    ),
   );
 }
 

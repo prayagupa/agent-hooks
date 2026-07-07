@@ -99,11 +99,13 @@ pub fn validate_transform_ctx(
 /// already applied during the §7.1 fold via [`apply_transform_ctx`].
 /// The verdict is deserialized permissively because the emitter may
 /// pass a host-synthesized `host_error:*` deny (§6.3).
+/// `decided_by` uses `-1` for "none" (pure allow / host-synthesized).
 pub fn finalize(
     ctx_json: &str,
     verdict_json: &str,
     mode: &str,
     input_identity: &str,
+    decided_by: i64,
 ) -> Result<String, FfiError> {
     let ctx: AgentContext = serde_json::from_str(ctx_json)
         .map_err(|e| err(HostError::ContextInvalid, format!("ctx: {e}")))?;
@@ -114,7 +116,12 @@ pub fn finalize(
         "evaluate_only" => EnforcementMode::EvaluateOnly,
         _ => return Err(err(HostError::ContextInvalid, format!("mode: {mode}"))),
     };
-    let record = enforce_mod::finalize(&ctx, v, mode, input_identity);
+    let decided = if decided_by < 0 {
+        None
+    } else {
+        Some(decided_by as u32)
+    };
+    let record = enforce_mod::finalize(&ctx, v, mode, input_identity, decided);
     Ok(serde_json::to_string(&record).expect("record serialize"))
 }
 

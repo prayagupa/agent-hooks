@@ -197,10 +197,12 @@ pub type AgentContext = serde_json::Map<String, Value>;
 
 /// Host-side record of one interception (§6, §10).
 ///
-/// Identity-only by design: the identities bind the record to the exact
+/// Payload-free by design: the identities bind the record to the exact
 /// pre/post-fold context without duplicating the (possibly sensitive)
-/// payload into audit storage. Hosts that need the raw transformed value
-/// log it at the callsite.
+/// payload into audit storage. `session_id`, `sequence`, and
+/// `decided_by` make records orderable within a session and attribute
+/// the decision to a registered interceptor. Hosts that need the raw
+/// transformed value log it at the callsite.
 #[derive(Debug, Clone, Serialize)]
 pub struct InterceptionRecord {
     pub interception_point: InterceptionPoint,
@@ -208,6 +210,17 @@ pub struct InterceptionRecord {
     pub verdict: Verdict,
     pub input_identity: String,
     pub enforced_identity: String,
+    /// `ctx.session.id` — correlates records across a session.
+    pub session_id: String,
+    /// `ctx.sequence` — total order of records within the session
+    /// (§12.2.3). `-1` when the context lacked the L0 field.
+    pub sequence: i64,
+    /// Registration index of the interceptor whose verdict became this
+    /// record's verdict. `None` for a pure allow with no deciding
+    /// interceptor and for host-synthesized `host_error:*` verdicts.
+    /// A resolver-substituted verdict keeps the escalating
+    /// interceptor's index.
+    pub decided_by: Option<u32>,
 }
 
 impl InterceptionRecord {

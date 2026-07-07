@@ -625,7 +625,11 @@ A host MUST compute two identities per interception:
 | `enforced_identity` | `context_identity(ctx)` after the §7.1 fold completes. Equal to `input_identity` when no transform was applied, and always equal in `evaluate_only` mode. |
 
 Approval binding (§9) uses `input_identity` as presented to the
-resolver; the record carries both.
+resolver; the record carries both. The record additionally carries
+`session_id`, `sequence`, and `decided_by` (the registration index of
+the deciding interceptor, or null) so records are totally ordered
+within a session and decisions are attributable — it remains
+payload-free.
 
 ## 11. Reserved reasons
 

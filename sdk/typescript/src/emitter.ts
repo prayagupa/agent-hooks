@@ -82,7 +82,7 @@ export class InterceptionEmitter {
     // alter what the record claims was evaluated.
     const inputId = native.contextIdentity(JSON.stringify(ctx));
 
-    let verdict = await this.dispatch(ctx);
+    let [verdict, decidedBy] = await this.dispatch(ctx);
 
     if (verdict.decision === Decision.Escalate && this.mode === EnforcementMode.Enforce) {
       verdict = await this.resolveEscalate(ctx, verdict, inputId);
@@ -91,10 +91,19 @@ export class InterceptionEmitter {
       if (verdict.decision === Decision.Transform) {
         verdict = this.foldTransform(ctx, verdict);
       }
+      // A resolver-substituted verdict keeps the escalating
+      // interceptor's index; host-synthesized failures do not.
+      if (verdict.reason?.startsWith("host_error:")) decidedBy = null;
     }
 
     const record: InterceptionRecord = JSON.parse(
-      native.finalize(JSON.stringify(ctx), JSON.stringify(verdict), this.mode, inputId),
+      native.finalize(
+        JSON.stringify(ctx),
+        JSON.stringify(verdict),
+        this.mode,
+        inputId,
+        decidedBy ?? -1,
+      ),
     );
     this._records.push(record);
     return record;
@@ -102,16 +111,20 @@ export class InterceptionEmitter {
 
   // ---------------------------------------------------------------------------
 
-  /** §7 dispatch with §7.1 sequential fold-through. */
-  private async dispatch(ctx: AgentContext): Promise<Verdict> {
+  /** §7 dispatch with §7.1 sequential fold-through. Returns the combined
+   * verdict and the deciding interceptor's registration index (`null`
+   * for pure allow or host-synthesized). */
+  private async dispatch(ctx: AgentContext): Promise<[Verdict, number | null]> {
     if (this.interceptors.length === 0) {
       // §7: zero interceptors fails closed. Register an explicit
       // allow-all interceptor for a deliberate passthrough.
-      return hostErrorVerdict(HostError.NoInterceptor);
+      return [hostErrorVerdict(HostError.NoInterceptor), null];
     }
 
     let combined: Verdict = { decision: Decision.Allow };
-    for (const c of this.interceptors) {
+    let decidedBy: number | null = null;
+    for (let i = 0; i < this.interceptors.length; i++) {
+      const c = this.interceptors[i];
       let v: Verdict;
       try {
         // §7.1/N05: each interceptor gets its own deep copy — an
@@ -120,23 +133,28 @@ export class InterceptionEmitter {
         native.validateVerdict(JSON.stringify(v)); // §5
       } catch (e) {
         if (e instanceof AgentHooksCoreError) {
-          return hostErrorVerdict(e.code as HostError, e.message);
+          return [hostErrorVerdict(e.code as HostError, e.message), null];
         }
-        return hostErrorVerdict(HostError.InterceptorFailed, (e as Error)?.constructor?.name ?? "Error");
+        return [
+          hostErrorVerdict(HostError.InterceptorFailed, (e as Error)?.constructor?.name ?? "Error"),
+          null,
+        ];
       }
 
       if (v.decision === Decision.Deny || v.decision === Decision.Escalate) {
-        return v; // first block short-circuits (§7.1)
+        return [v, i]; // first block short-circuits (§7.1)
       }
       if (v.decision === Decision.Transform) {
         v = this.foldTransform(ctx, v);
-        if (!permits(v.decision)) return v; // transform failed closed
+        if (!permits(v.decision)) return [v, null]; // transform failed closed
         combined = v;
+        decidedBy = i;
       } else if (v.decision === Decision.Warn && combined.decision === Decision.Allow) {
         combined = v;
+        decidedBy = i;
       }
     }
-    return combined;
+    return [combined, decidedBy];
   }
 
   /** Apply (enforce) or validate (evaluate_only) one transform (§7.1, §8). */

@@ -79,8 +79,10 @@ fn finalize(
     verdict_json: &str,
     mode: &str,
     input_identity: &str,
+    decided_by: i64,
 ) -> PyResult<String> {
-    core::finalize(ctx_json, verdict_json, mode, input_identity).map_err(|e| map_err(py, e))
+    core::finalize(ctx_json, verdict_json, mode, input_identity, decided_by)
+        .map_err(|e| map_err(py, e))
 }
 
 // ---- CTK engine (§13.2) ---------------------------------------------------

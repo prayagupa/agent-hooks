@@ -19,7 +19,7 @@ const binding = require("../binding.js") as {
   applyTransform(targetJson: string, path: string, valueJson: string): string;
   applyTransformCtx(ctxJson: string, path: string, valueJson: string): string;
   validateTransformCtx(ctxJson: string, path: string, valueJson: string): string;
-  finalize(ctxJson: string, verdictJson: string, mode: string, inputIdentity: string): string;
+  finalize(ctxJson: string, verdictJson: string, mode: string, inputIdentity: string, decidedBy: number): string;
   ctkScriptedIntercept(rulesJson: string, ctxJson: string): string;
   ctkScriptedResolve(rulesJson: string, ctxJson: string, identity: string): string;
   ctkShouldSkip(vectorJson: string, capsJson: string): string;

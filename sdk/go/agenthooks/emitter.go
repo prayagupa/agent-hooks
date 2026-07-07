@@ -23,6 +23,7 @@ package agenthooks
 // variant is the explicitly named EmitUnchecked.
 
 import (
+	"strings"
 	"sync"
 	"context"
 	"encoding/json"
@@ -103,7 +104,7 @@ func (e *InterceptionEmitter) EmitUnchecked(ctx context.Context, actx AgentConte
 		return InterceptionRecord{}, err
 	}
 
-	verdict := e.dispatch(ctx, actx)
+	verdict, decidedBy := e.dispatch(ctx, actx)
 
 	if verdict.Decision == Escalate && e.mode == Enforce {
 		verdict = e.resolveEscalate(ctx, actx.InterceptionPoint(), actx, verdict, inputID)
@@ -111,6 +112,11 @@ func (e *InterceptionEmitter) EmitUnchecked(ctx context.Context, actx AgentConte
 		// same fold rules as an interceptor transform.
 		if verdict.Decision == Transform {
 			verdict = e.foldTransform(actx, verdict)
+		}
+		// A resolver-substituted verdict keeps the escalating
+		// interceptor's index; host-synthesized failures do not.
+		if strings.HasPrefix(verdict.Reason, "host_error:") {
+			decidedBy = nil
 		}
 	}
 
@@ -122,7 +128,11 @@ func (e *InterceptionEmitter) EmitUnchecked(ctx context.Context, actx AgentConte
 	if err != nil {
 		return InterceptionRecord{}, err
 	}
-	recJSON, err := nativeFinalize(string(finalCtxJSON), string(verdictJSON), string(e.mode), inputID)
+	decidedByWire := int64(-1)
+	if decidedBy != nil {
+		decidedByWire = int64(*decidedBy)
+	}
+	recJSON, err := nativeFinalize(string(finalCtxJSON), string(verdictJSON), string(e.mode), inputID, decidedByWire)
 	if err != nil {
 		return InterceptionRecord{}, err
 	}
@@ -139,48 +149,56 @@ func (e *InterceptionEmitter) EmitUnchecked(ctx context.Context, actx AgentConte
 // dispatch invokes interceptors in registration order with §7.1
 // sequential fold-through. Every failure becomes a host_error deny
 // verdict (§6.3); dispatch never returns an error.
-func (e *InterceptionEmitter) dispatch(ctx context.Context, actx AgentContext) Verdict {
+// dispatch returns the combined verdict and the registration index of
+// the deciding interceptor (nil for pure allow or host-synthesized).
+func (e *InterceptionEmitter) dispatch(ctx context.Context, actx AgentContext) (Verdict, *int) {
 	if len(e.interceptors) == 0 {
 		// §7: zero interceptors fails closed. Register an explicit
 		// allow-all interceptor for a deliberate passthrough.
 		return HostErrorVerdict(ErrNoInterceptor,
-			"register an explicit allow-all interceptor for a deliberate passthrough")
+			"register an explicit allow-all interceptor for a deliberate passthrough"), nil
 	}
 
 	combined := AllowVerdict
-	for _, ic := range e.interceptors {
+	var decidedBy *int
+	for icIdx, ic := range e.interceptors {
 		// §7.1/N05: each interceptor gets its own deep copy — an
 		// in-place mutation of the copy cannot alter enforcement.
 		cp, err := DeepCopyContext(actx)
 		if err != nil {
-			return HostErrorVerdict(ErrContextInvalid, err.Error())
+			return HostErrorVerdict(ErrContextInvalid, err.Error()), nil
 		}
 		v, err := ic.OnHook(ctx, cp)
 		if err != nil {
-			return HostErrorVerdict(ErrInterceptorFailed, fmt.Sprintf("%T", err)) // §6.3
+			return HostErrorVerdict(ErrInterceptorFailed, fmt.Sprintf("%T", err)), nil // §6.3
 		}
 		vb, err := json.Marshal(v)
 		if err != nil {
-			return HostErrorVerdict(ErrInterceptorFailed, fmt.Sprintf("%T", err))
+			return HostErrorVerdict(ErrInterceptorFailed, fmt.Sprintf("%T", err)), nil
 		}
 		if _, err := nativeValidateVerdict(string(vb)); err != nil { // §5
-			return coreErrVerdict(err, ErrVerdictInvalid)
+			return coreErrVerdict(err, ErrVerdictInvalid), nil
 		}
 
 		if !v.Decision.Permits() {
-			return v // first block short-circuits (§7.1)
+			idx := icIdx
+			return v, &idx // first block short-circuits (§7.1)
 		}
 		if v.Decision == Transform {
 			v = e.foldTransform(actx, v)
 			if !v.Decision.Permits() { // transform failed closed
-				return v
+				return v, nil
 			}
 			combined = v
+			idx := icIdx
+			decidedBy = &idx
 		} else if v.Decision == Warn && combined.Decision == Allow {
 			combined = v
+			idx := icIdx
+			decidedBy = &idx
 		}
 	}
-	return combined
+	return combined, decidedBy
 }
 
 // foldTransform applies (enforce) or validates (evaluate_only) one

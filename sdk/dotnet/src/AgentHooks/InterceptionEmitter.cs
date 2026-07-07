@@ -83,7 +83,7 @@ public sealed class InterceptionEmitter
         // alter what the record claims was evaluated.
         var inputId = Native.ContextIdentity(ctx.Json.ToJsonString(Compact));
 
-        var verdict = await DispatchAsync(ctx, ct);
+        var (verdict, decidedBy) = await DispatchAsync(ctx, ct);
 
         if (verdict.Decision == Decision.Escalate && _mode == EnforcementMode.Enforce)
         {
@@ -92,13 +92,18 @@ public sealed class InterceptionEmitter
             // same fold rules as an interceptor transform.
             if (verdict.Decision == Decision.Transform)
                 verdict = FoldTransform(ctx, verdict);
+            // A resolver-substituted verdict keeps the escalating
+            // interceptor's index; host-synthesized failures do not.
+            if (verdict.Reason?.StartsWith("host_error:", StringComparison.Ordinal) == true)
+                decidedBy = null;
         }
 
         var recordJson = Native.Finalize(
             ctx.Json.ToJsonString(Compact),
             verdict.ToWire().ToJsonString(Compact),
             _mode == EnforcementMode.Enforce ? "enforce" : "evaluate_only",
-            inputId);
+            inputId,
+            decidedBy ?? -1);
         var record = RecordFromCore((JsonObject)JsonNode.Parse(recordJson)!);
         lock (_recordsLock) _records.Add(record);
         return record;
@@ -106,18 +111,20 @@ public sealed class InterceptionEmitter
 
     // -------------------------------------------------------------------------
 
-    private async ValueTask<Verdict> DispatchAsync(AgentContext ctx, CancellationToken ct)
+    private async ValueTask<(Verdict, int?)> DispatchAsync(AgentContext ctx, CancellationToken ct)
     {
         if (_interceptors.Count == 0)
         {
             // §7: zero interceptors fails closed. Register an explicit
             // allow-all interceptor for a deliberate passthrough.
-            return Verdict.FromHostError(HostError.NoInterceptor);
+            return (Verdict.FromHostError(HostError.NoInterceptor), null);
         }
 
         var combined = Verdict.Allow;
-        foreach (var i in _interceptors)
+        int? decidedBy = null;
+        for (var idx = 0; idx < _interceptors.Count; idx++)
         {
+            var i = _interceptors[idx];
             Verdict v;
             try
             {
@@ -129,27 +136,29 @@ public sealed class InterceptionEmitter
             }
             catch (AgentHooksCoreException e)
             {
-                return Verdict.FromHostError(e.Code, e.Message);
+                return (Verdict.FromHostError(e.Code, e.Message), null);
             }
             catch (Exception e) // fail closed per §6.3
             {
-                return Verdict.FromHostError(HostError.InterceptorFailed, e.GetType().Name);
+                return (Verdict.FromHostError(HostError.InterceptorFailed, e.GetType().Name), null);
             }
 
             if (!v.Decision.Permits())
-                return v; // first block short-circuits (§7.1)
+                return (v, idx); // first block short-circuits (§7.1)
             if (v.Decision == Decision.Transform)
             {
                 v = FoldTransform(ctx, v);
-                if (!v.Decision.Permits()) return v; // transform failed closed
+                if (!v.Decision.Permits()) return (v, null); // transform failed closed
                 combined = v;
+                decidedBy = idx;
             }
             else if (v.Decision == Decision.Warn && combined.Decision == Decision.Allow)
             {
                 combined = v;
+                decidedBy = idx;
             }
         }
-        return combined;
+        return (combined, decidedBy);
     }
 
     /// <summary>Apply (enforce) or validate (evaluate_only) one transform
@@ -218,6 +227,9 @@ public sealed class InterceptionEmitter
             (string)r["mode"]! == "enforce" ? EnforcementMode.Enforce : EnforcementMode.EvaluateOnly,
             Verdict.FromWire(vw),
             (string)r["input_identity"]!,
-            (string)r["enforced_identity"]!);
+            (string)r["enforced_identity"]!,
+            (string?)r["session_id"] ?? string.Empty,
+            (long?)r["sequence"] ?? -1,
+            r["decided_by"] is null ? null : (int?)r["decided_by"]!);
     }
 }

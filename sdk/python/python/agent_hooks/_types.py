@@ -230,6 +230,13 @@ class InterceptionRecord:
     verdict: Verdict
     input_identity: str
     enforced_identity: str
+    #: ``ctx.session.id`` — correlates records across a session.
+    session_id: str = ""
+    #: ``ctx.sequence`` — total order within the session (§12.2.3).
+    sequence: int = -1
+    #: Registration index of the deciding interceptor; ``None`` for a
+    #: pure allow or a host-synthesized ``host_error:*`` verdict.
+    decided_by: int | None = None
 
     @property
     def proceeds(self) -> bool:
@@ -266,4 +273,7 @@ class InterceptionRecord:
             verdict=verdict,
             input_identity=obj["input_identity"],
             enforced_identity=obj["enforced_identity"],
+            session_id=obj.get("session_id", ""),
+            sequence=obj.get("sequence", -1),
+            decided_by=obj.get("decided_by"),
         )

@@ -59,7 +59,7 @@ internal static partial class Native
     private static partial IntPtr ah_validate_transform_ctx(string ctxJson, string path, string valueJson);
 
     [LibraryImport(Lib, StringMarshalling = StringMarshalling.Utf8)]
-    private static partial IntPtr ah_finalize(string ctxJson, string verdictJson, string mode, string inputIdentity);
+    private static partial IntPtr ah_finalize(string ctxJson, string verdictJson, string mode, string inputIdentity, long decidedBy);
 
     // ---- CTK engine (§13.2) ------------------------------------------------
 
@@ -105,8 +105,8 @@ internal static partial class Native
         Unwrap(ah_apply_transform_ctx(ctxJson, path, valueJson));
     internal static string ValidateTransformCtx(string ctxJson, string path, string valueJson) =>
         Unwrap(ah_validate_transform_ctx(ctxJson, path, valueJson));
-    internal static string Finalize(string ctxJson, string verdictJson, string mode, string inputIdentity) =>
-        Unwrap(ah_finalize(ctxJson, verdictJson, mode, inputIdentity));
+    internal static string Finalize(string ctxJson, string verdictJson, string mode, string inputIdentity, long decidedBy) =>
+        Unwrap(ah_finalize(ctxJson, verdictJson, mode, inputIdentity, decidedBy));
 
     internal static string CtkScriptedIntercept(string rulesJson, string ctxJson) =>
         Unwrap(ah_ctk_scripted_intercept(rulesJson, ctxJson));

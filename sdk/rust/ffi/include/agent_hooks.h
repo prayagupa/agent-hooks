@@ -34,8 +34,10 @@ AhResult *ah_apply_transform_ctx(const char *ctx_json, const char *path,
                                  const char *value_json);
 AhResult *ah_validate_transform_ctx(const char *ctx_json, const char *path,
                                     const char *value_json);
+/* decided_by: registration index of the deciding interceptor; -1 = none. */
 AhResult *ah_finalize(const char *ctx_json, const char *verdict_json,
-                      const char *mode, const char *input_identity);
+                      const char *mode, const char *input_identity,
+                      int64_t decided_by);
 
 /* CTK engine (spec section 13.2) */
 AhResult *ah_ctk_scripted_intercept(const char *rules_json,

@@ -224,7 +224,10 @@ public sealed record InterceptionRecord(
     EnforcementMode Mode,
     Verdict Verdict,
     string InputIdentity,
-    string EnforcedIdentity)
+    string EnforcedIdentity,
+    string SessionId,
+    long Sequence,
+    int? DecidedBy)
 {
     /// <summary>Whether the guarded action executes (§6, §8).</summary>
     public bool Proceeds => Mode == EnforcementMode.EvaluateOnly || Verdict.Decision.Permits();

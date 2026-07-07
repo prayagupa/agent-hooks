@@ -2,7 +2,7 @@
   "$id": "https://agent-hooks.responsibleai.dev/v0.1/interception-record.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Agent Hooks \u2014 interception record",
-  "description": "Host-side record of one interception (AGENT-HOOKS-0.1 \u00a76, \u00a710). Identity-only by design: input/enforced identities bind the record to the exact pre/post-fold context without duplicating the payload into audit storage.",
+  "description": "Host-side record of one interception (AGENT-HOOKS-0.1 \u00a76, \u00a710). Payload-free: identities bind the record to the exact pre/post-fold context; session_id/sequence/decided_by provide ordering and attribution without payload duplication.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -10,7 +10,9 @@
     "mode",
     "verdict",
     "input_identity",
-    "enforced_identity"
+    "enforced_identity",
+    "session_id",
+    "sequence"
   ],
   "properties": {
     "interception_point": {
@@ -33,6 +35,22 @@
     "enforced_identity": {
       "type": "string",
       "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "session_id": {
+      "type": "string",
+      "description": "ctx.session.id \u2014 correlates records across a session."
+    },
+    "sequence": {
+      "type": "integer",
+      "description": "ctx.sequence \u2014 total order of records within the session (\u00a712.2.3)."
+    },
+    "decided_by": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "description": "Registration index of the interceptor whose verdict became this record's verdict; null for a pure allow or a host-synthesized host_error:* verdict. A resolver-substituted verdict keeps the escalating interceptor's index."
     }
   }
 }

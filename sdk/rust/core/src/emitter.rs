@@ -47,6 +47,14 @@ impl fmt::Display for InterceptionBlocked {
 
 impl std::error::Error for InterceptionBlocked {}
 
+/// Whether a verdict was synthesized by the host (§11) rather than
+/// returned by an interceptor or resolver.
+fn is_host_synthesized(v: &Verdict) -> bool {
+    v.reason
+        .as_deref()
+        .is_some_and(|r| r.starts_with("host_error:"))
+}
+
 /// Host-side helper that implements §6–§9 once so adapters don't have
 /// to. One instance per session.
 pub struct InterceptionEmitter {
@@ -106,7 +114,7 @@ impl InterceptionEmitter {
         // alter what the record claims was evaluated.
         let input_id = context_identity(ctx);
 
-        let mut verdict = self.dispatch(ctx).await;
+        let (mut verdict, mut decided_by) = self.dispatch(ctx).await;
 
         if verdict.decision == Decision::Escalate && self.mode == EnforcementMode::Enforce {
             verdict = self.resolve_escalate(ctx, verdict, &input_id).await;
@@ -115,25 +123,34 @@ impl InterceptionEmitter {
             if verdict.decision == Decision::Transform {
                 verdict = self.fold_transform(ctx, verdict);
             }
+            // A resolver-substituted verdict keeps the escalating
+            // interceptor's index; host-synthesized failures do not.
+            if is_host_synthesized(&verdict) {
+                decided_by = None;
+            }
         }
 
-        let record = finalize(ctx, verdict, self.mode, &input_id);
+        let record = finalize(ctx, verdict, self.mode, &input_id, decided_by);
         self.records.push(record.clone());
         record
     }
 
     // -------------------------------------------------------------------------
 
-    /// §7 dispatch with §7.1 sequential fold-through.
-    async fn dispatch(&self, ctx: &mut AgentContext) -> Verdict {
+    /// §7 dispatch with §7.1 sequential fold-through. Returns the
+    /// combined verdict and the registration index of the deciding
+    /// interceptor (`None` for pure allow or host-synthesized).
+    async fn dispatch(&self, ctx: &mut AgentContext) -> (Verdict, Option<u32>) {
         if self.interceptors.is_empty() {
             // §7: zero interceptors fails closed. Register an explicit
             // allow-all interceptor for a deliberate passthrough.
-            return Verdict::host_error(HostError::NoInterceptor, None);
+            return (Verdict::host_error(HostError::NoInterceptor, None), None);
         }
 
         let mut combined = Verdict::allow();
-        for interceptor in &self.interceptors {
+        let mut decided_by: Option<u32> = None;
+        for (i, interceptor) in self.interceptors.iter().enumerate() {
+            let i = i as u32;
             // §7.1/N05: each interceptor gets its own copy — in-place
             // mutation of the copy cannot alter enforcement.
             let copy = ctx.clone();
@@ -141,23 +158,25 @@ impl InterceptionEmitter {
             if v.validate().is_err() {
                 // §5 gate; the interceptor trait is infallible so the
                 // only failure mode is a malformed verdict shape.
-                return Verdict::host_error(HostError::VerdictInvalid, None);
+                return (Verdict::host_error(HostError::VerdictInvalid, None), None);
             }
 
             if !v.decision.permits() {
-                return v; // first block short-circuits (§7.1)
+                return (v, Some(i)); // first block short-circuits (§7.1)
             }
             if v.decision == Decision::Transform {
                 let v = self.fold_transform(ctx, v);
                 if !v.decision.permits() {
-                    return v; // transform failed closed
+                    return (v, None); // transform failed closed (host-synthesized)
                 }
                 combined = v;
+                decided_by = Some(i);
             } else if v.decision == Decision::Warn && combined.decision == Decision::Allow {
                 combined = v;
+                decided_by = Some(i);
             }
         }
-        combined
+        (combined, decided_by)
     }
 
     /// Apply (enforce) or validate (evaluate_only) one transform (§7.1, §8).

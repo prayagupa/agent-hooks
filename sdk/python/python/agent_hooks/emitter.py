@@ -102,7 +102,7 @@ class InterceptionEmitter:
         # alter what the record claims was evaluated.
         input_id = _core.context_identity(json.dumps(ctx))
 
-        verdict = await self._dispatch(ctx)
+        verdict, decided_by = await self._dispatch(ctx)
 
         if verdict.decision is Decision.ESCALATE and self._mode is EnforcementMode.ENFORCE:
             ip = InterceptionPoint(ctx["interception_point"])
@@ -111,9 +111,17 @@ class InterceptionEmitter:
             # same fold rules as an interceptor transform.
             if verdict.decision is Decision.TRANSFORM:
                 verdict = self._fold_transform(ctx, verdict)
+            # A resolver-substituted verdict keeps the escalating
+            # interceptor's index; host-synthesized failures do not.
+            if verdict.reason is not None and verdict.reason.startswith("host_error:"):
+                decided_by = None
 
         record_json = _core.finalize(
-            json.dumps(ctx), json.dumps(verdict.to_wire()), self._mode.value, input_id
+            json.dumps(ctx),
+            json.dumps(verdict.to_wire()),
+            self._mode.value,
+            input_id,
+            -1 if decided_by is None else decided_by,
         )
         record = InterceptionRecord.from_core(json.loads(record_json))
         self._records.append(record)
@@ -121,15 +129,21 @@ class InterceptionEmitter:
 
     # -------------------------------------------------------------------------
 
-    async def _dispatch(self, ctx: AgentContext) -> Verdict:
-        """§7 dispatch with §7.1 sequential fold-through."""
+    async def _dispatch(self, ctx: AgentContext) -> tuple[Verdict, int | None]:
+        """§7 dispatch with §7.1 sequential fold-through.
+
+        Returns the combined verdict and the registration index of the
+        deciding interceptor (``None`` for pure allow or a
+        host-synthesized verdict).
+        """
         if not self._interceptors:
             # §7: zero interceptors fails closed. Register an explicit
             # allow-all interceptor for a deliberate passthrough.
-            return Verdict.host_error(HostError.NO_INTERCEPTOR)
+            return Verdict.host_error(HostError.NO_INTERCEPTOR), None
 
         combined = Verdict(decision=Decision.ALLOW)
-        for c in self._interceptors:
+        decided_by: int | None = None
+        for i, c in enumerate(self._interceptors):
             try:
                 # §7.1/N05: each interceptor gets its own deep copy — an
                 # in-place mutation of the copy cannot alter enforcement.
@@ -142,20 +156,22 @@ class InterceptionEmitter:
             except _core.AgentHooksCoreError as e:
                 return Verdict.host_error(
                     HostError(getattr(e, "code", HostError.VERDICT_INVALID.value)), str(e)
-                )
+                ), None
             except Exception as e:  # noqa: BLE001 — fail closed per §6.3
-                return Verdict.host_error(HostError.INTERCEPTOR_FAILED, type(e).__name__)
+                return Verdict.host_error(HostError.INTERCEPTOR_FAILED, type(e).__name__), None
 
             if v.decision.blocks:
-                return v  # first block short-circuits (§7.1)
+                return v, i  # first block short-circuits (§7.1)
             if v.decision is Decision.TRANSFORM:
                 v = self._fold_transform(ctx, v)
-                if v.decision.blocks:  # transform failed closed
-                    return v
+                if v.decision.blocks:  # transform failed closed (host-synthesized)
+                    return v, None
                 combined = v
+                decided_by = i
             elif v.decision is Decision.WARN and combined.decision is Decision.ALLOW:
                 combined = v
-        return combined
+                decided_by = i
+        return combined, decided_by
 
     def _fold_transform(self, ctx: AgentContext, v: Verdict) -> Verdict:
         """Apply (enforce) or validate (evaluate_only) one transform (§7.1, §8)."""
