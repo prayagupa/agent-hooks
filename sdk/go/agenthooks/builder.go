@@ -10,7 +10,10 @@ package agenthooks
 // target. One instance per session. Port of
 // sdk/python/python/agent_hooks/context.py.
 
-import "time"
+import (
+	"sync/atomic"
+	"time"
+)
 
 // AgentContextBuilder is the stateful per-session builder for
 // AgentContext values.
