@@ -7,7 +7,7 @@ on:
     paths:
       - "spec/schema/**"
       - "scripts/**"
-      - "sdk/python/src/agent_hooks/schema/**"
+      - "sdk/python/python/agent_hooks/schema/**"
 
 jobs:
   drift:
@@ -19,9 +19,9 @@ jobs:
       - name: Regenerate per-point schemas and vendored copies
         run: |
           python3 scripts/gen-per-point-schemas.py
-          rm -rf sdk/python/src/agent_hooks/schema
-          mkdir -p sdk/python/src/agent_hooks/schema/agent-context
-          cp spec/schema/*.json sdk/python/src/agent_hooks/schema/
-          cp spec/schema/agent-context/*.json sdk/python/src/agent_hooks/schema/agent-context/
+          rm -rf sdk/python/python/agent_hooks/schema
+          mkdir -p sdk/python/python/agent_hooks/schema/agent-context
+          cp spec/schema/*.json sdk/python/python/agent_hooks/schema/
+          cp spec/schema/agent-context/*.json sdk/python/python/agent_hooks/schema/agent-context/
       - name: Fail if regeneration produced a diff
         run: git diff --exit-code

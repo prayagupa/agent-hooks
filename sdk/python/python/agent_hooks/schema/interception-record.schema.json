@@ -1,18 +1,30 @@
 {
   "$id": "https://agent-hooks.responsibleai.dev/v0.1/interception-record.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Agent Hooks — interception record",
-  "description": "Host-side record of a hook evaluation (AGENT-HOOKS-0.1 §6, §10). Returned by an emitter to the host's audit/telemetry layer.",
+  "title": "Agent Hooks \u2014 interception record",
+  "description": "Host-side record of one interception (AGENT-HOOKS-0.1 \u00a76, \u00a710). Identity-only by design: input/enforced identities bind the record to the exact pre/post-fold context without duplicating the payload into audit storage.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["interception_point", "mode", "verdict", "input_identity", "enforced_identity"],
+  "required": [
+    "interception_point",
+    "mode",
+    "verdict",
+    "input_identity",
+    "enforced_identity"
+  ],
   "properties": {
-    "interception_point": { "$ref": "interception-point.schema.json" },
-    "mode": { "type": "string", "enum": ["enforce", "evaluate_only"] },
-    "verdict": { "$ref": "verdict.schema.json" },
-    "transformed_target": {
-      "description": "Present iff mode == enforce and verdict.decision == transform.",
-      "default": null
+    "interception_point": {
+      "$ref": "interception-point.schema.json"
+    },
+    "mode": {
+      "type": "string",
+      "enum": [
+        "enforce",
+        "evaluate_only"
+      ]
+    },
+    "verdict": {
+      "$ref": "verdict.schema.json"
     },
     "input_identity": {
       "type": "string",
