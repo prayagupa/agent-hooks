@@ -25,9 +25,9 @@ import (
 // VectorResult is the outcome of one vector run.
 type VectorResult = agenthooks.CtkVectorResult
 
-// LoadVectors globs conformance/vectors/AH-CTK-*.json under dir,
-// returning those with level <= maxLevel in sorted order.
-func LoadVectors(dir string, maxLevel int) ([]map[string]any, error) {
+// LoadVectors globs conformance/vectors/AH-CTK-*.json under dir in
+// sorted order.
+func LoadVectors(dir string) ([]map[string]any, error) {
 	paths, err := filepath.Glob(filepath.Join(dir, "AH-CTK-*.json"))
 	if err != nil {
 		return nil, err
@@ -43,26 +43,27 @@ func LoadVectors(dir string, maxLevel int) ([]map[string]any, error) {
 		if err := json.Unmarshal(b, &v); err != nil {
 			return nil, fmt.Errorf("%s: %w", p, err)
 		}
-		if lvl, _ := v["level"].(float64); int(lvl) <= maxLevel {
-			out = append(out, v)
-		}
+		out = append(out, v)
 	}
 	return out, nil
 }
 
-// scriptedInterceptor wraps agenthooks.CtkScriptedIntercept and
-// records every context it is handed.
+// scriptedInterceptor wraps agenthooks.CtkScriptedIntercept; when record
+// is set it also records every context it is handed.
 type scriptedInterceptor struct {
 	rulesJSON string
+	record    bool
 	recorded  []agenthooks.AgentContext
 }
 
 func (s *scriptedInterceptor) OnHook(_ context.Context, actx agenthooks.AgentContext) (agenthooks.Verdict, error) {
-	cp, err := agenthooks.DeepCopyContext(actx)
-	if err != nil {
-		return agenthooks.Verdict{}, err
+	if s.record {
+		cp, err := agenthooks.DeepCopyContext(actx)
+		if err != nil {
+			return agenthooks.Verdict{}, err
+		}
+		s.recorded = append(s.recorded, cp)
 	}
-	s.recorded = append(s.recorded, cp)
 	return agenthooks.CtkScriptedIntercept(s.rulesJSON, actx)
 }
 
@@ -109,8 +110,6 @@ func RunVector(ctx context.Context, h Harness, vector map[string]any) (VectorRes
 	vectorJSON := mustJSON(vector)
 	id, _ := vector["id"].(string)
 	title, _ := vector["title"].(string)
-	lvlF, _ := vector["level"].(float64)
-	level := int(lvlF)
 
 	caps := make([]string, 0, len(h.Capabilities()))
 	for c := range h.Capabilities() {
@@ -120,13 +119,34 @@ func RunVector(ctx context.Context, h Harness, vector map[string]any) (VectorRes
 	if reason, err := agenthooks.CtkShouldSkip(vectorJSON, caps); err != nil {
 		return VectorResult{}, err
 	} else if reason != "" {
-		return VectorResult{ID: id, Title: title, Level: level, Status: "skip", Detail: reason}, nil
+		return VectorResult{ID: id, Title: title, Status: "skip", Detail: reason}, nil
 	}
 
 	scenRaw, _ := vector["scenario"].(map[string]any)
 	scenario := scenarioFromWire(scenRaw)
 
-	ic := &scriptedInterceptor{rulesJSON: mustJSON(vector["interceptor_script"])}
+	// Multi-interceptor vectors (§7.1 fold-through) use
+	// interceptor_scripts; single-interceptor vectors use
+	// interceptor_script. Only the FIRST interceptor records:
+	// expect.interceptions describes each emission as the first-registered
+	// interceptor saw it. An empty interceptor_scripts registers zero
+	// interceptors (§7 fail-closed vector).
+	var scripts []any
+	if ss, ok := vector["interceptor_scripts"].([]any); ok {
+		scripts = ss
+	} else {
+		scripts = []any{vector["interceptor_script"]}
+	}
+	var first *scriptedInterceptor
+	interceptors := make([]agenthooks.Interceptor, 0, len(scripts))
+	for i, s := range scripts {
+		si := &scriptedInterceptor{rulesJSON: mustJSON(s), record: i == 0}
+		if i == 0 {
+			first = si
+		}
+		interceptors = append(interceptors, si)
+	}
+
 	var resolver agenthooks.ApprovalResolver
 	if approval, ok := vector["approval_script"].([]any); ok && len(approval) > 0 {
 		resolver = &scriptedResolver{rulesJSON: mustJSON(approval)}
@@ -136,18 +156,22 @@ func RunVector(ctx context.Context, h Harness, vector map[string]any) (VectorRes
 		mode = agenthooks.EnforcementMode(m)
 	}
 
-	if err := h.Setup(scenario, ic, resolver, mode); err != nil {
-		return VectorResult{ID: id, Title: title, Level: level, Status: "fail",
+	if err := h.Setup(scenario, interceptors, resolver, mode); err != nil {
+		return VectorResult{ID: id, Title: title, Status: "fail",
 			Failures: []string{fmt.Sprintf("harness.Setup: %v", err)}}, nil
 	}
 	rr, runErr := h.Run(ctx)
 	h.Teardown()
 	if runErr != nil {
-		return VectorResult{ID: id, Title: title, Level: level, Status: "fail",
+		return VectorResult{ID: id, Title: title, Status: "fail",
 			Failures: []string{fmt.Sprintf("harness.Run: %v", runErr)}}, nil
 	}
 
-	return agenthooks.CtkAssert(vectorJSON, ic.recorded, runRecordToWire(rr))
+	recorded := []agenthooks.AgentContext{}
+	if first != nil {
+		recorded = first.recorded
+	}
+	return agenthooks.CtkAssert(vectorJSON, recorded, runRecordToWire(rr))
 }
 
 func scenarioFromWire(s map[string]any) Scenario {

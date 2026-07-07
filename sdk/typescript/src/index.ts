@@ -74,6 +74,7 @@ export const HostError = Object.freeze({
   ApprovalActionMismatch: "host_error:approval_action_mismatch",
   AdapterUnsupported: "host_error:adapter_unsupported",
   StreamingUnsupported: "host_error:streaming_unsupported",
+  NoInterceptor: "host_error:no_interceptor",
 } as const);
 export type HostError = (typeof HostError)[keyof typeof HostError];
 
@@ -121,14 +122,18 @@ export interface AgentContext {
   [l1l2: string]: JsonValue | undefined;
 }
 
-/** Host-side record of one interception (§6, §10). */
+/** Host-side record of one interception (§6, §10).
+ *
+ * Identity-only by design: the identities bind the record to the exact
+ * pre/post-fold context without duplicating the (possibly sensitive)
+ * payload into audit storage. Hosts that need the raw transformed value
+ * log it at the callsite. */
 export interface InterceptionRecord {
   interception_point: InterceptionPoint;
   mode: EnforcementMode;
   verdict: Verdict;
   input_identity: string;
   enforced_identity: string;
-  transformed_target?: JsonValue;
 }
 
 /** Whether the guarded action executes (§6, §8). */
@@ -192,18 +197,35 @@ export function applyTransform(target: JsonValue, path: string, value: JsonValue
   return JSON.parse(native.applyTransform(JSON.stringify(target), path, JSON.stringify(value)));
 }
 
-/** §7.1: combine an ordered array of verdicts. Rust core. */
-export function combineVerdicts(verdicts: readonly Verdict[]): Verdict {
-  return JSON.parse(native.combineVerdicts(JSON.stringify(verdicts)));
+/** §7.1 fold-through: apply one transform to the context's `target` (and
+ * its L1 alias) so the next interceptor sees the effect. Returns the
+ * updated context. Rust core. */
+export function applyTransformCtx(
+  ctx: AgentContext,
+  path: string,
+  value: JsonValue,
+): AgentContext {
+  return JSON.parse(native.applyTransformCtx(JSON.stringify(ctx), path, JSON.stringify(value)));
 }
 
-/** §6/§8/§10: enforcement step. Returns `{record, ctx}`. Rust core. */
-export function enforce(
+/** §8 `evaluate_only`: validate a transform against the context's current
+ * target without applying it. Rust core. */
+export function validateTransformCtx(ctx: AgentContext, path: string, value: JsonValue): void {
+  native.validateTransformCtx(JSON.stringify(ctx), path, JSON.stringify(value));
+}
+
+/** §6/§10: build the `InterceptionRecord` for one completed interception.
+ * `inputIdentity` MUST have been computed before interceptor dispatch;
+ * transforms were already applied during the §7.1 fold. Rust core. */
+export function finalize(
   ctx: AgentContext,
   verdict: Verdict,
   mode: EnforcementMode,
-): { record: InterceptionRecord; ctx: AgentContext } {
-  return JSON.parse(native.enforce(JSON.stringify(ctx), JSON.stringify(verdict), mode));
+  inputIdentity: string,
+): InterceptionRecord {
+  return JSON.parse(
+    native.finalize(JSON.stringify(ctx), JSON.stringify(verdict), mode, inputIdentity),
+  );
 }
 
 export { AgentContextBuilder } from "./builder";

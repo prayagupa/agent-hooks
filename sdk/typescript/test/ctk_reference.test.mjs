@@ -12,7 +12,7 @@ import { loadVectors, runVector, ReferenceHarness } from "../dist/ctk/index.js";
 const here = dirname(fileURLToPath(import.meta.url));
 const vectorsDir = resolve(here, "../../../conformance/vectors");
 
-for (const v of loadVectors(vectorsDir, 2)) {
+for (const v of loadVectors(vectorsDir)) {
   test(`ctk ${v.id} ${v.title}`, async () => {
     const r = await runVector(new ReferenceHarness(), v);
     if (r.status === "skip") {

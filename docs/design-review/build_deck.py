@@ -523,26 +523,23 @@ header(s, "SPEC §13", "Conformance Test Kit",
        "Language-agnostic JSON vectors; one Harness shim per framework; "
        "three conformance levels")
 
-# left: pyramid
+# left: single conformance bar + capability gating
 px, pw = 1.0, 4.6
-levels_p = [
-    ("Level 3  Complete", "L2 fields, result_labels propagation, "
-     "parallel/streaming, stable identity", CYAN),
-    ("Level 2  Enforcing", "honours deny / transform / escalate / "
-     "evaluate_only", BLUE),
-    ("Level 1  Instrumented", "all interception points fire in order with valid L0+L1 "
-     "context", SLATE),
-]
-for i, (t, d, col) in enumerate(levels_p):
-    inset = (2 - i) * 0.45
-    sp = box(s, px + inset, 2.2 + i * 1.25, pw - 2 * inset, 1.1,
-             fill=col, line=None)
-    tf = sp.text_frame
-    tf.word_wrap = True
-    txt(tf, t, size=12, bold=True, color=CARD, align=PP_ALIGN.CENTER,
-        anchor=MSO_ANCHOR.MIDDLE)
-    txt(tf, d, size=8, color=RGBColor(0xE8, 0xE8, 0xE8),
-        align=PP_ALIGN.CENTER, first=False)
+sp = box(s, px, 2.4, pw, 1.3, fill=BLUE, line=None)
+tf = sp.text_frame
+tf.word_wrap = True
+txt(tf, "CONFORMANT", size=16, bold=True, color=CARD,
+    align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
+txt(tf, "passes 100% of vectors applicable to declared capabilities — "
+        "emission + enforcement, one bar, no tiers",
+    size=9, color=RGBColor(0xE8, 0xE8, 0xE8), align=PP_ALIGN.CENTER, first=False)
+tf2 = textbox(s, px, 3.95, pw, 2.4)
+txt(tf2, "Capability gating (§3.2):", size=11, bold=True, color=NAVY)
+for c in ["model_calls", "tool_calls", "parallel_tool_calls",
+          "streaming", "multi_turn"]:
+    txt(tf2, f"  {c}", size=10, color=SLATE, font=MONO, first=False, space_after=1)
+txt(tf2, "Not a security certification (SECURITY.md, §1.4).",
+    size=9, color=AMBER, italic=True, first=False)
 
 # right: CTK pipeline
 rx = px + pw + 0.7
@@ -565,9 +562,8 @@ for i, (t, d, fill, line) in enumerate(steps):
                   color=SLATE, width=1.5)
 
 label(s, rx, 6.45, W - rx - 0.9, 0.4,
-      "14 vectors today (L1+L2). RM-01 (critical): negative-path / "
-      "fail-closed vectors missing.", size=9, color=RED,
-      align=PP_ALIGN.LEFT)
+      "16 vectors incl. fold-through and zero-interceptor fail-closed.",
+      size=9, color=SLATE, align=PP_ALIGN.LEFT)
 
 footer(s, 9, TOTAL)
 notes(s, "Harness is the ONLY framework-specific code (~100 lines). "

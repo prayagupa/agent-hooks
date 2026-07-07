@@ -141,30 +141,6 @@ fn opt_string(
     }
 }
 
-/// Combine an ordered sequence of verdicts per §7.1.
-///
-/// 1. First block verdict (`deny` or `escalate`) short-circuits.
-/// 2. Otherwise the last `transform` wins.
-/// 3. Otherwise `warn` if any; else `allow`.
-///
-/// Callers pass verdicts in registration order. An empty slice yields
-/// `allow` (§7.1 "trivially satisfies" for zero interceptors is currently
-/// undefined normatively — see RM-N11 — so this is the pragmatic default
-/// and is what the reference emitter does).
-pub fn combine(verdicts: &[Verdict]) -> Verdict {
-    let mut combined = Verdict::allow();
-    for v in verdicts {
-        if !v.decision.permits() {
-            return v.clone();
-        }
-        match v.decision {
-            Decision::Transform => combined = v.clone(),
-            Decision::Warn if combined.decision == Decision::Allow => combined = v.clone(),
-            _ => {}
-        }
-    }
-    combined
-}
 
 #[cfg(test)]
 mod tests {
@@ -216,47 +192,6 @@ mod tests {
         .is_err());
     }
 
-    #[test]
-    fn combine_first_block() {
-        let vs = [
-            Verdict::allow(),
-            Verdict {
-                decision: Decision::Deny,
-                reason: Some("no".into()),
-                ..Verdict::allow()
-            },
-            Verdict {
-                decision: Decision::Warn,
-                ..Verdict::allow()
-            },
-        ];
-        assert_eq!(combine(&vs).decision, Decision::Deny);
-    }
 
-    #[test]
-    fn combine_last_transform() {
-        let t1 = Verdict {
-            decision: Decision::Transform,
-            transform: Some(Transform {
-                path: "$target.a".into(),
-                value: json!(1),
-            }),
-            ..Verdict::allow()
-        };
-        let t2 = Verdict {
-            decision: Decision::Transform,
-            transform: Some(Transform {
-                path: "$target.b".into(),
-                value: json!(2),
-            }),
-            ..Verdict::allow()
-        };
-        let out = combine(&[t1, t2]);
-        assert_eq!(out.transform.unwrap().path, "$target.b");
-    }
 
-    #[test]
-    fn combine_empty() {
-        assert_eq!(combine(&[]).decision, Decision::Allow);
-    }
 }

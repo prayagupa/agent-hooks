@@ -1,20 +1,19 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-//! Stateless enforcement step (§6, §8, §10).
+//! Stateless enforcement primitives (§6, §7.1, §8, §10).
 //!
-//! Given an `AgentContext`, a combined `Verdict`, and an `EnforcementMode`,
-//! this function applies the transform (in `enforce` mode), computes both
-//! action identities, writes the transformed target back into the context's
-//! L1 field per §4.3, and returns an `InterceptionRecord`.
-//!
-//! Interceptor dispatch and approval-seam resolution (§7, §9) stay in the
-//! per-language wrapper because they are callbacks into user code; this
-//! function is the pure part every wrapper calls after dispatch.
+//! With §7.1 sequential fold-through, transform application happens
+//! **during** interceptor dispatch (each interceptor sees the prior
+//! transforms' effect), so the per-language emitter loop calls
+//! [`apply_transform_to_ctx`] between interceptors (in `enforce` mode)
+//! and [`finalize`] once at the end to compute identities and build the
+//! [`InterceptionRecord`]. Both are pure; everything that calls back
+//! into user code stays in the wrapper.
 
 use crate::canonical::context_identity;
 use crate::path;
 use crate::types::{
-    AgentContext, Decision, EnforcementMode, HostError, InterceptionPoint, InterceptionRecord,
+    AgentContext, EnforcementMode, HostError, InterceptionPoint, InterceptionRecord, Transform,
     Verdict,
 };
 use serde_json::Value;
@@ -37,55 +36,62 @@ impl FromStr for InterceptionPoint {
     }
 }
 
-/// Apply §6/§8/§10 to a combined verdict. Mutates `ctx.target` (and the
-/// aliased L1 field) on transform in `enforce` mode. Returns an
-/// `InterceptionRecord`; the record's verdict may differ from the input
-/// (rewritten to a `host_error:*` deny on transform failure per §11).
-pub fn enforce(
+fn interception_point_of(ctx: &AgentContext) -> Result<InterceptionPoint, HostError> {
+    ctx.get("interception_point")
+        .and_then(Value::as_str)
+        .ok_or(HostError::ContextInvalid)?
+        .parse()
+}
+
+/// Apply one `transform` to the context's `target` and mirror it into
+/// the L1 field it aliases (§4.3, §5.2). Fails closed on a forbidden
+/// point or unresolvable path; the caller synthesizes the `host_error`
+/// deny. In `evaluate_only` mode callers use [`validate_transform`]
+/// instead (§8: validated, not applied).
+pub fn apply_transform_to_ctx(
     ctx: &mut AgentContext,
+    transform: &Transform,
+) -> Result<(), HostError> {
+    let ip = interception_point_of(ctx)?;
+    if !ip.transform_permitted() {
+        return Err(HostError::TransformTargetForbidden);
+    }
+    let target = ctx.get("target").cloned().unwrap_or(Value::Null);
+    let applied = path::apply(target, &transform.path, transform.value.clone())?;
+    ctx.insert("target".into(), applied.clone());
+    write_back_target(ip, ctx, &applied);
+    Ok(())
+}
+
+/// §8 `evaluate_only`: validate a transform against the current target
+/// without applying it.
+pub fn validate_transform(ctx: &AgentContext, transform: &Transform) -> Result<(), HostError> {
+    let ip = interception_point_of(ctx)?;
+    if !ip.transform_permitted() {
+        return Err(HostError::TransformTargetForbidden);
+    }
+    let target = ctx.get("target").cloned().unwrap_or(Value::Null);
+    path::apply(target, &transform.path, transform.value.clone()).map(|_| ())
+}
+
+/// Build the [`InterceptionRecord`] for one completed interception
+/// (§6, §10). `input_identity` MUST have been computed from the context
+/// **before** interceptor dispatch (§10.2); `enforced_identity` is
+/// computed here from the post-fold context, so the two differ exactly
+/// when a transform was applied.
+pub fn finalize(
+    ctx: &AgentContext,
     verdict: Verdict,
     mode: EnforcementMode,
+    input_identity: &str,
 ) -> InterceptionRecord {
-    let ip: InterceptionPoint = ctx
-        .get("interception_point")
-        .and_then(Value::as_str)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(InterceptionPoint::AgentStartup);
-
-    let input_identity = context_identity(ctx);
-    let mut enforced_identity = input_identity.clone();
-    let mut transformed_target: Option<Value> = None;
-    let mut verdict = verdict;
-
-    if verdict.decision == Decision::Transform {
-        if !ip.transform_permitted() {
-            verdict = Verdict::host_error(HostError::TransformTargetForbidden, None);
-        } else if let Some(t) = &verdict.transform {
-            let target = ctx.get("target").cloned().unwrap_or(Value::Null);
-            match path::apply(target, &t.path, t.value.clone()) {
-                Ok(applied) => {
-                    if mode == EnforcementMode::Enforce {
-                        ctx.insert("target".into(), applied.clone());
-                        write_back_target(ip, ctx, &applied);
-                        enforced_identity = context_identity(ctx);
-                        transformed_target = Some(applied);
-                    }
-                    // evaluate_only: validated but not applied (§8)
-                }
-                Err(e) => {
-                    verdict = Verdict::host_error(e, None);
-                }
-            }
-        }
-    }
-
+    let ip = interception_point_of(ctx).unwrap_or(InterceptionPoint::AgentStartup);
     InterceptionRecord {
         interception_point: ip,
         mode,
         verdict,
-        input_identity,
-        enforced_identity,
-        transformed_target,
+        input_identity: input_identity.to_owned(),
+        enforced_identity: context_identity(ctx),
     }
 }
 
@@ -121,7 +127,7 @@ fn write_back_target(ip: InterceptionPoint, ctx: &mut AgentContext, transformed:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::Transform;
+    use crate::types::Decision;
     use serde_json::json;
 
     fn ctx(ip: &str, target: Value) -> AgentContext {
@@ -142,8 +148,9 @@ mod tests {
 
     #[test]
     fn allow_identities_equal() {
-        let mut c = ctx("pre_tool_call", json!({"url": "x"}));
-        let r = enforce(&mut c, Verdict::allow(), EnforcementMode::Enforce);
+        let c = ctx("pre_tool_call", json!({"url": "x"}));
+        let input_id = context_identity(&c);
+        let r = finalize(&c, Verdict::allow(), EnforcementMode::Enforce, &input_id);
         assert_eq!(r.input_identity, r.enforced_identity);
         assert!(r.proceeds());
     }
@@ -151,55 +158,48 @@ mod tests {
     #[test]
     fn transform_applies_and_writes_back() {
         let mut c = ctx("pre_tool_call", json!({"url": "evil"}));
-        let v = Verdict {
-            decision: Decision::Transform,
-            transform: Some(Transform {
-                path: "$target.url".into(),
-                value: json!("safe"),
-            }),
-            ..Verdict::allow()
+        let input_id = context_identity(&c);
+        let t = Transform {
+            path: "$target.url".into(),
+            value: json!("safe"),
         };
-        let r = enforce(&mut c, v, EnforcementMode::Enforce);
-        assert_ne!(r.input_identity, r.enforced_identity);
+        apply_transform_to_ctx(&mut c, &t).unwrap();
         assert_eq!(c["target"]["url"], json!("safe"));
         assert_eq!(c["tool_call"]["args"]["url"], json!("safe"));
-        assert_eq!(r.transformed_target.unwrap()["url"], json!("safe"));
+        let v = Verdict {
+            decision: Decision::Transform,
+            transform: Some(t),
+            ..Verdict::allow()
+        };
+        let r = finalize(&c, v, EnforcementMode::Enforce, &input_id);
+        assert_ne!(r.input_identity, r.enforced_identity);
     }
 
     #[test]
     fn transform_forbidden_at_startup() {
         let mut c = ctx("agent_startup", json!({}));
-        let v = Verdict {
-            decision: Decision::Transform,
-            transform: Some(Transform {
-                path: "$target.x".into(),
-                value: json!(1),
-            }),
-            ..Verdict::allow()
+        let t = Transform {
+            path: "$target.x".into(),
+            value: json!(1),
         };
-        let r = enforce(&mut c, v, EnforcementMode::Enforce);
         assert_eq!(
-            r.verdict.reason.as_deref(),
-            Some("host_error:transform_target_forbidden")
+            apply_transform_to_ctx(&mut c, &t),
+            Err(HostError::TransformTargetForbidden)
         );
-        assert!(!r.proceeds());
     }
 
     #[test]
-    fn evaluate_only_validates_but_does_not_apply() {
-        let mut c = ctx("pre_tool_call", json!({"url": "evil"}));
-        let v = Verdict {
-            decision: Decision::Transform,
-            transform: Some(Transform {
-                path: "$target.url".into(),
-                value: json!("safe"),
-            }),
-            ..Verdict::allow()
+    fn evaluate_only_validates_without_applying() {
+        let c = ctx("pre_tool_call", json!({"url": "evil"}));
+        let t = Transform {
+            path: "$target.url".into(),
+            value: json!("safe"),
         };
-        let r = enforce(&mut c, v, EnforcementMode::EvaluateOnly);
-        assert_eq!(r.input_identity, r.enforced_identity);
+        validate_transform(&c, &t).unwrap();
         assert_eq!(c["target"]["url"], json!("evil"));
-        assert!(r.transformed_target.is_none());
-        assert!(r.proceeds());
+        assert_eq!(
+            validate_transform(&c, &Transform { path: "$target.missing.x".into(), value: json!(0) }),
+            Err(HostError::TransformInvalid)
+        );
     }
 }

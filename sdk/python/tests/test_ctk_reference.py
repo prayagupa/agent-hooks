@@ -14,7 +14,7 @@ _VECTORS = pathlib.Path(__file__).resolve().parents[3] / "conformance" / "vector
 
 @pytest.mark.parametrize(
     "vector",
-    load_vectors(_VECTORS, max_level=2),
+    load_vectors(_VECTORS),
     ids=lambda v: v["id"],
 )
 def test_reference_harness_conformance(vector: dict) -> None:

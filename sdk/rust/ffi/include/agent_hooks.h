@@ -30,9 +30,12 @@ AhResult *ah_context_identity(const char *ctx_json);
 AhResult *ah_validate_verdict(const char *verdict_json);
 AhResult *ah_apply_transform(const char *target_json, const char *path,
                              const char *value_json);
-AhResult *ah_combine_verdicts(const char *verdicts_json);
-AhResult *ah_enforce(const char *ctx_json, const char *verdict_json,
-                     const char *mode);
+AhResult *ah_apply_transform_ctx(const char *ctx_json, const char *path,
+                                 const char *value_json);
+AhResult *ah_validate_transform_ctx(const char *ctx_json, const char *path,
+                                    const char *value_json);
+AhResult *ah_finalize(const char *ctx_json, const char *verdict_json,
+                      const char *mode, const char *input_identity);
 
 /* CTK engine (spec section 13.2) */
 AhResult *ah_ctk_scripted_intercept(const char *rules_json,

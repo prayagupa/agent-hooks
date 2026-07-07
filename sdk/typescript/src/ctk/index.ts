@@ -63,7 +63,7 @@ export interface Harness {
 
   setup(
     scenario: Scenario,
-    interceptor: Interceptor,
+    interceptors: Interceptor[],
     resolver: ApprovalResolver | null,
     mode: EnforcementMode,
   ): void;

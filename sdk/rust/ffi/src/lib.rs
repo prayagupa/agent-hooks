@@ -120,29 +120,56 @@ pub unsafe extern "C" fn ah_apply_transform(
     ))
 }
 
-/// §7.1
-///
-/// # Safety
-/// `verdicts_json` must be a valid NUL-terminated UTF-8 C string.
-#[no_mangle]
-pub unsafe extern "C" fn ah_combine_verdicts(verdicts_json: *const c_char) -> *mut AhResult {
-    boxed(core::combine_verdicts(from_c(verdicts_json)))
-}
-
-/// §6/§8/§10
+/// §7.1 fold-through
 ///
 /// # Safety
 /// All pointers must be valid NUL-terminated UTF-8 C strings.
 #[no_mangle]
-pub unsafe extern "C" fn ah_enforce(
+pub unsafe extern "C" fn ah_apply_transform_ctx(
+    ctx_json: *const c_char,
+    path: *const c_char,
+    value_json: *const c_char,
+) -> *mut AhResult {
+    boxed(core::apply_transform_ctx(
+        from_c(ctx_json),
+        from_c(path),
+        from_c(value_json),
+    ))
+}
+
+/// §8 evaluate_only transform validation
+///
+/// # Safety
+/// All pointers must be valid NUL-terminated UTF-8 C strings.
+#[no_mangle]
+pub unsafe extern "C" fn ah_validate_transform_ctx(
+    ctx_json: *const c_char,
+    path: *const c_char,
+    value_json: *const c_char,
+) -> *mut AhResult {
+    boxed(core::validate_transform_ctx(
+        from_c(ctx_json),
+        from_c(path),
+        from_c(value_json),
+    ))
+}
+
+/// §6/§10 finalize
+///
+/// # Safety
+/// All pointers must be valid NUL-terminated UTF-8 C strings.
+#[no_mangle]
+pub unsafe extern "C" fn ah_finalize(
     ctx_json: *const c_char,
     verdict_json: *const c_char,
     mode: *const c_char,
+    input_identity: *const c_char,
 ) -> *mut AhResult {
-    boxed(core::enforce(
+    boxed(core::finalize(
         from_c(ctx_json),
         from_c(verdict_json),
         from_c(mode),
+        from_c(input_identity),
     ))
 }
 

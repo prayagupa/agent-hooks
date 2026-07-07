@@ -32,7 +32,7 @@ class MyFrameworkHarness(Harness):
     def setup(
         self,
         scenario: Scenario,
-        interceptor: Interceptor,
+        interceptors: list[Interceptor],
         resolver: ApprovalResolver | None,
         mode: EnforcementMode,
     ) -> None:
@@ -88,8 +88,7 @@ mandatory baseline is `{}` (lifecycle only: `agent_startup`, `input`,
 ```bash
 # Python
 pytest --agent-hooks-harness=my_pkg.MyFrameworkHarness \
-       --agent-hooks-vectors=path/to/conformance/vectors \
-       --agent-hooks-level=2
+       --agent-hooks-vectors=path/to/conformance/vectors
 ```
 
 See per-language `sdk/<lang>/README.md` for the equivalent invocation.

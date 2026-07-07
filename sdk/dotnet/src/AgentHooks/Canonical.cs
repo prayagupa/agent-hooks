@@ -35,14 +35,29 @@ public static class Canonical
             path,
             value?.ToJsonString(Compact) ?? "null"));
 
-    /// <summary>§7.1: combine an ordered array of verdicts. Rust core.</summary>
-    public static JsonNode CombineVerdicts(JsonArray verdicts) =>
-        JsonNode.Parse(Native.CombineVerdicts(verdicts.ToJsonString(Compact)))!;
+    /// <summary>§7.1 fold-through: apply one transform to the context's
+    /// target (and its L1 alias). Returns the updated context. Rust core.</summary>
+    public static JsonObject ApplyTransformCtx(AgentContext ctx, string path, JsonNode? value) =>
+        (JsonObject)JsonNode.Parse(Native.ApplyTransformCtx(
+            ctx.Json.ToJsonString(Compact),
+            path,
+            value?.ToJsonString(Compact) ?? "null"))!;
 
-    /// <summary>§6/§8/§10: enforcement step. Returns <c>{record, ctx}</c>. Rust core.</summary>
-    public static JsonNode Enforce(AgentContext ctx, JsonNode verdict, EnforcementMode mode) =>
-        JsonNode.Parse(Native.Enforce(
+    /// <summary>§8 <c>evaluate_only</c>: validate a transform against the
+    /// context's target without applying it. Rust core.</summary>
+    public static void ValidateTransformCtx(AgentContext ctx, string path, JsonNode? value) =>
+        Native.ValidateTransformCtx(
+            ctx.Json.ToJsonString(Compact),
+            path,
+            value?.ToJsonString(Compact) ?? "null");
+
+    /// <summary>§6/§10: build the <c>InterceptionRecord</c> for one completed
+    /// interception. Rust core.</summary>
+    public static JsonObject Finalize(
+        AgentContext ctx, JsonNode verdict, EnforcementMode mode, string inputIdentity) =>
+        (JsonObject)JsonNode.Parse(Native.Finalize(
             ctx.Json.ToJsonString(Compact),
             verdict.ToJsonString(Compact),
-            mode == EnforcementMode.Enforce ? "enforce" : "evaluate_only"))!;
+            mode == EnforcementMode.Enforce ? "enforce" : "evaluate_only",
+            inputIdentity))!;
 }

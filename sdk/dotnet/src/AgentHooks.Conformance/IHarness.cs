@@ -109,7 +109,7 @@ public interface IHarness
 
     void Setup(
         Scenario scenario,
-        IInterceptor interceptor,
+        IReadOnlyList<IInterceptor> interceptors,
         IApprovalResolver? resolver,
         EnforcementMode mode);
 

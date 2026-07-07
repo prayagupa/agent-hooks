@@ -17,10 +17,10 @@ from agent_hooks import AgentContextBuilder, InterceptionEmitter, InterceptionBl
 builder = AgentContextBuilder(agent_id="...", framework="my-fw", session_id="...")
 emitter = InterceptionEmitter().register(my_consumer)
 
-await emitter.emit_or_raise(builder.agent_startup(tools_registered=[...]))
+await emitter.emit(builder.agent_startup(tools_registered=[...]))
 ctx = builder.pre_tool_call(call_id="tc-1", name="http_get", args={"url": u})
 try:
-    await emitter.emit_or_raise(ctx)
+    await emitter.emit(ctx)
 except InterceptionBlocked as e:
     return tool_error(e.result.verdict.reason)
 result = invoke_tool(ctx["tool_call"]["args"])  # post-transform args
@@ -44,6 +44,5 @@ Implement `agent_hooks.ctk.Harness` (see `conformance/HARNESS.md`), then:
 
 ```bash
 pytest --agent-hooks-harness=my_pkg:MyHarness \
-       --agent-hooks-vectors=path/to/conformance/vectors \
-       --agent-hooks-level=2
+       --agent-hooks-vectors=path/to/conformance/vectors
 ```

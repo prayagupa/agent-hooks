@@ -3,7 +3,7 @@
 
 package conformance
 
-// CTK self-test: run all Level<=2 vectors against the in-tree
+// CTK self-test: run all vectors against the in-tree
 // ReferenceHarness. Assertion engine and scripted interceptor live in
 // the Rust core; this proves the Go emitter/runner wiring end-to-end.
 
@@ -16,7 +16,7 @@ import (
 
 func TestReferenceHarnessConformance(t *testing.T) {
 	dir := filepath.Join("..", "..", "..", "conformance", "vectors")
-	vectors, err := LoadVectors(dir, 2)
+	vectors, err := LoadVectors(dir)
 	if err != nil {
 		t.Fatalf("LoadVectors: %v", err)
 	}

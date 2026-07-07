@@ -47,13 +47,31 @@ pub fn apply_transform(target_json: String, path: String, value_json: String) ->
 }
 
 #[napi]
-pub fn combine_verdicts(verdicts_json: String) -> Result<String> {
-    core::combine_verdicts(&verdicts_json).map_err(map_err)
+pub fn apply_transform_ctx(
+    ctx_json: String,
+    path: String,
+    value_json: String,
+) -> Result<String> {
+    core::apply_transform_ctx(&ctx_json, &path, &value_json).map_err(map_err)
 }
 
 #[napi]
-pub fn enforce(ctx_json: String, verdict_json: String, mode: String) -> Result<String> {
-    core::enforce(&ctx_json, &verdict_json, &mode).map_err(map_err)
+pub fn validate_transform_ctx(
+    ctx_json: String,
+    path: String,
+    value_json: String,
+) -> Result<String> {
+    core::validate_transform_ctx(&ctx_json, &path, &value_json).map_err(map_err)
+}
+
+#[napi]
+pub fn finalize(
+    ctx_json: String,
+    verdict_json: String,
+    mode: String,
+    input_identity: String,
+) -> Result<String> {
+    core::finalize(&ctx_json, &verdict_json, &mode, &input_identity).map_err(map_err)
 }
 
 // ---- CTK engine (§13.2) ---------------------------------------------------

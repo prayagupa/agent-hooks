@@ -48,8 +48,8 @@ lifecycle points by returning a verdict the host MUST act on). It defines:
 - the **`AgentContext`** JSON payload a host MUST construct at each interception point,
 - the **`Verdict`** JSON payload an interceptor MUST return,
 - the **obligations** a host MUST honour for each verdict decision,
-- a tiered **conformance** model and a language-agnostic **Conformance Test
-  Kit** (CTK).
+- a capability-scoped **conformance** model and a language-agnostic
+  **Conformance Test Kit** (CTK).
 
 This specification does NOT define how an interceptor computes a verdict.
 Policy languages, manifests, dispatchers, annotators, and information-flow
@@ -501,31 +501,44 @@ value MUST treat the verdict as `deny` with `host_error:interceptor_failed` or
 
 An interceptor is a callable `intercept(context: AgentContext) -> Verdict`. A host:
 
-- MUST invoke each registered interceptor synchronously with respect to the
-  guarded action (the action MUST NOT begin until all interceptors have returned).
-- SHOULD bound interceptor execution with a configurable timeout (RECOMMENDED
-  default: 5000 ms) and apply §6.3 on breach.
-- MAY invoke interceptors asynchronously with respect to each other.
+- MUST invoke registered interceptors sequentially, in registration
+  order, with respect to the guarded action (the action MUST NOT begin
+  until every invoked interceptor has returned and the fold in §7.1 is
+  complete).
+- MUST pass each interceptor its own copy of the context; an
+  interceptor's in-place mutation of the object it received MUST NOT
+  affect enforcement, identity computation, or later interceptors.
+- MUST, in `enforce` mode with zero registered interceptors, treat every
+  emission as `deny` with reason `host_error:no_interceptor` (§11). A
+  deliberate passthrough is expressed by registering an explicit
+  allow-all interceptor.
+- SHOULD bound interceptor execution with a configurable timeout
+  (RECOMMENDED default: 5000 ms) and apply §6.3 on breach.
 
-### 7.1 Multiple interceptors
+### 7.1 Sequential fold-through
 
-[Default Implementation]
+[Pure Specification]
 
-A host MAY register more than one interceptor. When it does, the host MUST
-combine verdicts deterministically:
+Interceptors compose by folding transforms through the dispatch order:
 
 1. Invoke interceptors in registration order.
-2. The combined verdict is the first block verdict (`deny` or `escalate`) in
-   order; remaining interceptors are NOT invoked.
-3. If no interceptor returns a block verdict, the combined verdict is the last
-   `transform` in order (later transforms see earlier transforms' effect on
-   `target`); otherwise `warn` if any interceptor returned `warn`; otherwise
-   `allow`.
-
-A host that registers exactly one controlling interceptor trivially satisfies
-this section.
-
----
+2. The first block verdict (`deny` or `escalate`) short-circuits:
+   remaining interceptors are NOT invoked and it becomes the combined
+   verdict.
+3. When an interceptor returns `transform` in `enforce` mode, the host
+   MUST apply it to `target` (per §5.2, including the §4.3 write-back)
+   **before** invoking the next interceptor, so each interceptor
+   observes the context as already transformed by its predecessors. In
+   `evaluate_only` mode the transform is validated but not applied
+   (§8), so later interceptors observe the untransformed context.
+4. A transform that fails to apply (§5.2) becomes a `deny` with the
+   corresponding `host_error:*` reason and short-circuits.
+5. If no block occurred, the combined verdict recorded is the last
+   `transform` returned; otherwise `warn` if any interceptor returned
+   `warn`; otherwise `allow`. `input_identity` is computed before step
+   1 and `enforced_identity` after the fold (§10.2), so the record
+   captures the cumulative effect regardless of which single verdict is
+   recorded.
 
 ## 8. Enforcement mode
 
@@ -582,30 +595,37 @@ When a verdict is `escalate`, the host MUST consult a registered
 
 ### 10.1 Canonical JSON
 
-A host MUST be able to serialize an `AgentContext` to canonical JSON:
-
-1. Object members emitted in lexicographic order of UTF-8 byte sequence of the
-   member name.
-2. No insignificant whitespace.
-3. Numbers per ECMA-262 `Number.prototype.toString` (shortest round-trip).
-4. Strings with the minimal escape set of RFC 8259.
+A host MUST serialize per RFC 8785 (JSON Canonicalization Scheme):
+object members sorted by UTF-16 code units, numbers per ECMA-262
+`Number::toString`, minimal RFC 8259 string escapes, no insignificant
+whitespace. The canonical Rust core delegates to an RFC 8785
+implementation; every binding inherits it, and the golden vectors in
+`conformance/golden/identity.json` pin the exact bytes.
 
 ### 10.2 Context identity
 
 `context_identity(ctx)` is `"sha256:" + lowercase_hex(SHA-256(canonical_json(ctx_L01)))`
-where `ctx_L01` is `ctx` with all members not in L0 or L1 removed (i.e., L2
-fields, `extensions`, and unknown members are excluded).
+where `ctx_L01` is the **closed** L0+L1 projection of `ctx` for its
+interception point: exactly the fields marked required in the per-point
+schemas under `spec/schema/agent-context/`, including the nested
+subfield whitelists (`agent.{id,framework}`, `session.{id}`,
+`model.{id}`, `tool_call.{id,name,args}`, `tool_result.{value,is_error}`,
+`response.{content,tool_calls,finish_reason}`, `input.{content,role}`,
+`agent_init.{tools_registered}`, `output.{content}`,
+`summary.{reason}`). All other members — top-level L2/L3 and nested
+optional subfields such as `tool_result.duration_ms` or
+`tool_call.content_hash` — are excluded, so adding optional data never
+perturbs the identity.
 
 A host MUST compute two identities per interception:
 
 | Identity | Definition |
 | --- | --- |
-| `input_identity` | `context_identity(ctx)` as supplied to the interceptor. |
-| `enforced_identity` | `context_identity(ctx')` where `ctx'` is `ctx` with `target` replaced by the post-`transform` value. Equal to `input_identity` for non-`transform` verdicts and in `evaluate_only` mode. |
+| `input_identity` | `context_identity(ctx)` **before** interceptor dispatch (§7.1 step 1). |
+| `enforced_identity` | `context_identity(ctx)` after the §7.1 fold completes. Equal to `input_identity` when no transform was applied, and always equal in `evaluate_only` mode. |
 
-Approval binding (§9) uses `enforced_identity`.
-
----
+Approval binding (§9) uses `input_identity` as presented to the
+resolver; the record carries both.
 
 ## 11. Reserved reasons
 
@@ -628,6 +648,7 @@ synthesizes a `deny` verdict per §6.3, §5.2, or §9. An interceptor MUST NOT e
 | `host_error:approval_unresolved` | The resolver returned `unresolved`. |
 | `host_error:approval_action_mismatch` | The resolver's `context_identity` did not match. |
 | `host_error:adapter_unsupported` | The host adapter cannot emit this interception point. |
+| `host_error:no_interceptor` | An `enforce`-mode emission with zero registered interceptors (§7). |
 | `host_error:streaming_unsupported` | The host cannot satisfy §12 for a streaming response. |
 
 The machine-readable inventory is `spec/reserved-reasons.json`.
@@ -657,23 +678,32 @@ remain strictly increasing across the interleaving.
 
 ## 13. Conformance
 
-### 13.1 Levels
+### 13.1 Conformance
 
-| Level | Name | Requirement |
-| --- | --- | --- |
-| **1** | Instrumented | Host emits all interception points applicable to its declared capabilities, in the order of §3.1, with `AgentContext` valid against the per-point L0+L1 schema. Verdicts MAY be ignored. |
-| **2** | Enforcing | Level 1, AND host honours `deny`, `transform`, and `escalate` per §6 and §9, AND `evaluate_only` per §8. |
-| **3** | Complete | Level 2, AND host populates all L2 fields it has data for, persists and resurfaces `result_labels` per §5.4, satisfies §12, AND `context_identity` is stable across runs given identical inputs. |
+| Requirement |
+| --- |
+| A host is **conformant** when it passes 100% of the CTK vectors applicable to its declared capability subset (§3.2). |
+
+There are no conformance tiers. The single bar includes correct
+emission (order, schema-valid L0+L1 contexts per §3–§4) and correct
+enforcement (`deny`, `transform` fold-through, `escalate` with the
+approval seam, `evaluate_only`, and the fail-closed rules of §6.3 and
+§7). A host that only wants observation is out of scope for this
+specification (§1.1); partial adapters under development can run vector
+subsets locally but MUST NOT claim conformance.
+
+Populating L2 fields where the framework has the data is a SHOULD and
+is not conformance-gated.
 
 ### 13.2 CTK
 
 The Conformance Test Kit under `conformance/` is the normative test of §13.1.
-A host claims Level N conformance by:
+A host claims conformance by:
 
 1. Implementing the `Harness` interface in at least one SDK language
    (`conformance/HARNESS.md`).
 2. Declaring its `capabilities` subset (§3.2).
-3. Passing 100% of non-skipped vectors at Level ≤ N.
+3. Passing 100% of non-skipped vectors.
 
 Vectors are language-agnostic JSON under `conformance/vectors/` validated by
 `conformance/vectors.schema.json`. Per-language CTK runners are provided under
@@ -682,7 +712,7 @@ Vectors are language-agnostic JSON under `conformance/vectors/` validated by
 ### 13.3 Claims
 
 A conformance claim is the tuple
-`(<framework>, <adapter-version>, agent-hooks/<spec-version>, Level <N>, <sdk-lang>@<sdk-version>)`
+`(<framework>, <adapter-version>, agent-hooks/<spec-version>, <capabilities>, <sdk-lang>@<sdk-version>)`
 recorded in `conformance/CLAIMS.md`.
 
 ---
@@ -710,5 +740,6 @@ recorded in `conformance/CLAIMS.md`.
 - [RFC 8174] Ambiguity of Uppercase vs Lowercase in RFC 2119 Key Words.
 - [RFC 8259] The JavaScript Object Notation (JSON) Data Interchange Format.
 - [RFC 3339] Date and Time on the Internet: Timestamps.
+- [RFC 8785] JSON Canonicalization Scheme (JCS).
 - Agent Control Specification v0.3.1-beta. `policy-engine/spec/SPECIFICATION.md`.
 - AGT-SNAPSHOT-1.0. `policy-engine/spec/agt/AGT-SNAPSHOT-1.0.md`.

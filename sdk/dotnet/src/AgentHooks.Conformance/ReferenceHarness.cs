@@ -1,6 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-// Reference in-memory Level-2 host. Self-test target for the CTK.
+// Reference in-memory conformant host. Self-test target for the CTK.
 // Port of sdk/python/python/agent_hooks/ctk/reference.py.
 
 using System.Text.Json.Nodes;
@@ -19,12 +19,14 @@ public sealed class ReferenceHarness : IHarness
     private readonly List<JsonObject> _toolLog = [];
 
     public void Setup(
-        Scenario scenario, IInterceptor interceptor,
+        Scenario scenario, IReadOnlyList<IInterceptor> interceptors,
         IApprovalResolver? resolver, EnforcementMode mode)
     {
         _scenario = scenario;
         _toolLog.Clear();
-        _emitter = new InterceptionEmitter(mode, resolver).Register(interceptor);
+        var em = new InterceptionEmitter(mode, resolver);
+        foreach (var i in interceptors) em.Register(i);
+        _emitter = em;
         _builder = new AgentContextBuilder(
             agentId: "ref-agent",
             framework: "reference-agent",
@@ -38,9 +40,9 @@ public sealed class ReferenceHarness : IHarness
         JsonNode? final = null;
         try
         {
-            await em.EmitOrThrowAsync(
+            await em.EmitAsync(
                 b.AgentStartup(s.Tools.Keys.OrderBy(k => k)), ct);
-            await em.EmitOrThrowAsync(
+            await em.EmitAsync(
                 b.Input(s.Input["content"]?.DeepClone(), (string)s.Input["role"]!), ct);
 
             var messages = new JsonArray(new JsonObject
@@ -52,10 +54,10 @@ public sealed class ReferenceHarness : IHarness
             foreach (var resp in s.ModelScript)
             {
                 var pre = b.PreModelCall("mock", (JsonArray)messages.DeepClone());
-                await em.EmitOrThrowAsync(pre, ct);
+                await em.EmitAsync(pre, ct);
                 messages = (JsonArray)pre.Json["messages"]!.DeepClone(); // may be transformed
 
-                await em.EmitOrThrowAsync(
+                await em.EmitAsync(
                     b.PostModelCall("mock", resp.Content?.DeepClone(),
                         (JsonArray)resp.ToolCalls.DeepClone(), resp.FinishReason), ct);
 
@@ -92,7 +94,7 @@ public sealed class ReferenceHarness : IHarness
             if (final is not null)
             {
                 var outCtx = b.Output(final);
-                await em.EmitOrThrowAsync(outCtx, ct);
+                await em.EmitAsync(outCtx, ct);
                 final = outCtx.Json["output"]?["content"]?.DeepClone();
             }
         }
@@ -102,7 +104,7 @@ public sealed class ReferenceHarness : IHarness
             final = null;
         }
 
-        await em.EmitAsync(
+        await em.EmitUncheckedAsync(
             b.AgentShutdown(outcome == RunOutcome.Completed ? "completed" : "error"), ct);
 
         return new RunRecord(
@@ -127,7 +129,7 @@ public sealed class ReferenceHarness : IHarness
         var args = (JsonObject)tc["args"]!.DeepClone();
 
         var pre = b.PreToolCall(callId, name, args);
-        await em.EmitOrThrowAsync(pre, ct);
+        await em.EmitAsync(pre, ct);
         var postArgs = (JsonObject)pre.Json["tool_call"]!["args"]!.DeepClone(); // post-transform
 
         var (value, isError) = s.Tools[name].Invoke(postArgs);
@@ -136,7 +138,7 @@ public sealed class ReferenceHarness : IHarness
             ["name"] = name, ["args"] = postArgs.DeepClone(),
         });
 
-        await em.EmitOrThrowAsync(
+        await em.EmitAsync(
             b.PostToolCall(callId, name, (JsonObject)postArgs.DeepClone(),
                 value, isError), ct);
 

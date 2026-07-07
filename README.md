@@ -38,7 +38,7 @@ the normative statement.
 | [`conformance/vectors/`](conformance/vectors/) | Language-agnostic CTK test vectors |
 | [`conformance/HARNESS.md`](conformance/HARNESS.md) | How to write a harness for your framework |
 | [`sdk/python/`](sdk/python/) | Reference SDK: types + emitter + **complete CTK runner** |
-| [`sdk/{rust,typescript,dotnet,go}/`](sdk/) | Type definitions + harness interface (CTK runners: [#2–#5](https://github.com/responsibleai/agent-hooks/issues)) |
+| [`sdk/{rust,typescript,dotnet,go}/`](sdk/) | Bindings over the Rust core: types, emitter, CTK runner, ReferenceHarness |
 
 ## The contract in one diagram
 
@@ -79,19 +79,18 @@ in any SDK; register with the host.
 ```bash
 cd sdk/python
 pip install -e .[ctk]
-pytest --agent-hooks-harness=your_pkg:YourHarness --agent-hooks-level=2
+pytest --agent-hooks-harness=your_pkg:YourHarness
 ```
 
-## Conformance levels
+## Conformance
 
-| Level | Name | Proves |
-| --- | --- | --- |
-| 1 | Instrumented | All applicable interception points fire in spec order with valid L0+L1 context. Verdicts may be ignored. Adapter-development stage; not a production claim. |
-| 2 | Enforcing | + host honours `deny`, `transform`, `escalate`, `evaluate_only` |
-| 3 | Complete | + L2 fields, `result_labels` propagation, parallel/streaming, stable identity |
+A host is **conformant** when it passes 100% of the CTK vectors
+applicable to its declared capability subset — a single bar covering
+correct emission and correct enforcement (`deny`, `transform`
+fold-through, `escalate`, `evaluate_only`, fail-closed). There are no
+tiers, and a conformance claim is not a security certification.
 
-See [`conformance/LEVELS.md`](conformance/LEVELS.md) and
-[`conformance/CLAIMS.md`](conformance/CLAIMS.md).
+See [`conformance/CLAIMS.md`](conformance/CLAIMS.md).
 
 ## Versioning
 

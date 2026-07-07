@@ -35,20 +35,14 @@ from agent_hooks.ctk.scripted import (
 class VectorResult:
     id: str
     title: str
-    level: int
     status: str  # "pass" | "fail" | "skip"
     detail: str = ""
     failures: list[str] = field(default_factory=list)
 
 
-def load_vectors(directory: str | pathlib.Path, *, max_level: int = 3) -> list[dict[str, Any]]:
+def load_vectors(directory: str | pathlib.Path) -> list[dict[str, Any]]:
     d = pathlib.Path(directory)
-    out: list[dict[str, Any]] = []
-    for f in sorted(d.glob("AH-CTK-*.json")):
-        v = json.loads(f.read_text())
-        if v["level"] <= max_level:
-            out.append(v)
-    return out
+    return [json.loads(f.read_text()) for f in sorted(d.glob("AH-CTK-*.json"))]
 
 
 def _run_record_to_wire(rr: RunRecord) -> str:
@@ -66,39 +60,47 @@ def _run_record_to_wire(rr: RunRecord) -> str:
 
 
 async def run_vector(harness: Harness, vector: dict[str, Any]) -> VectorResult:
-    vid, title, level = vector["id"], vector["title"], vector["level"]
+    vid, title = vector["id"], vector["title"]
     vector_json = json.dumps(vector)
 
     caps_json = json.dumps(sorted(c.value for c in harness.capabilities))
     skip = json.loads(_core.ctk_should_skip(vector_json, caps_json))
     if skip is not None:
-        return VectorResult(vid, title, level, "skip", detail=skip)
+        return VectorResult(vid, title, "skip", detail=skip)
 
     scenario = Scenario.from_wire(vector["scenario"])
-    interceptor = RecordingInterceptor(ScriptedInterceptor(vector["interceptor_script"]))
+    # Multi-interceptor vectors (§7.1 fold-through) use interceptor_scripts;
+    # single-interceptor vectors use interceptor_script. Only the FIRST
+    # interceptor records: expect.interceptions describes each emission as
+    # the first-registered interceptor saw it.
+    scripts = vector.get("interceptor_scripts")
+    if scripts is None:
+        scripts = [vector["interceptor_script"]]
+    first = RecordingInterceptor(ScriptedInterceptor(scripts[0])) if scripts else None
+    interceptors: list[Any] = [first] if first else []
+    interceptors += [ScriptedInterceptor(s) for s in scripts[1:]]
     approval = vector.get("approval_script")
     resolver = ScriptedResolver(approval) if approval else None
     mode = EnforcementMode(vector.get("mode", "enforce"))
 
-    harness.setup(scenario, interceptor, resolver, mode)
+    harness.setup(scenario, interceptors, resolver, mode)
     try:
         rr = await harness.run()
     except Exception as e:  # noqa: BLE001
-        return VectorResult(vid, title, level, "fail", failures=[f"harness.run raised: {e!r}"])
+        return VectorResult(vid, title, "fail", failures=[f"harness.run raised: {e!r}"])
     finally:
         harness.teardown()
 
     result = json.loads(
         _core.ctk_assert(
             vector_json,
-            json.dumps(interceptor.recorded),
+            json.dumps(first.recorded if first else []),
             _run_record_to_wire(rr),
         )
     )
     return VectorResult(
         id=result["id"],
         title=result["title"],
-        level=result["level"],
         status=result["status"],
         detail=result.get("detail", ""),
         failures=result.get("failures", []),

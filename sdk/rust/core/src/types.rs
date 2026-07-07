@@ -98,6 +98,10 @@ pub enum HostError {
     AdapterUnsupported,
     #[error("host_error:streaming_unsupported")]
     StreamingUnsupported,
+    /// §7: an `enforce`-mode emission with zero registered interceptors
+    /// fails closed rather than silently allowing everything.
+    #[error("host_error:no_interceptor")]
+    NoInterceptor,
 }
 
 /// A single `$target`-rooted replacement (§5.2).
@@ -180,6 +184,11 @@ impl Verdict {
 pub type AgentContext = serde_json::Map<String, Value>;
 
 /// Host-side record of one interception (§6, §10).
+///
+/// Identity-only by design: the identities bind the record to the exact
+/// pre/post-fold context without duplicating the (possibly sensitive)
+/// payload into audit storage. Hosts that need the raw transformed value
+/// log it at the callsite.
 #[derive(Debug, Clone, Serialize)]
 pub struct InterceptionRecord {
     pub interception_point: InterceptionPoint,
@@ -187,8 +196,6 @@ pub struct InterceptionRecord {
     pub verdict: Verdict,
     pub input_identity: String,
     pub enforced_identity: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub transformed_target: Option<Value>,
 }
 
 impl InterceptionRecord {

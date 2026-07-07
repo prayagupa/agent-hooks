@@ -19,7 +19,6 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=None,
         help="Path to conformance/vectors/ (defaults to repo-relative)",
     )
-    g.addoption("--agent-hooks-level", type=int, default=2, help="Max conformance level")
 
 
 def _load_harness(spec: str) -> type:
@@ -33,8 +32,7 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
     vdir = metafunc.config.getoption("--agent-hooks-vectors")
     if vdir is None:
         vdir = pathlib.Path(__file__).resolve().parents[5] / "conformance" / "vectors"
-    level = metafunc.config.getoption("--agent-hooks-level")
-    vectors = load_vectors(vdir, max_level=level)
+    vectors = load_vectors(vdir)
     metafunc.parametrize("agent_hooks_vector", vectors, ids=[v["id"] for v in vectors])
 
 

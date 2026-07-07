@@ -108,6 +108,7 @@ public static class HostError
     public const string ApprovalActionMismatch = "host_error:approval_action_mismatch";
     public const string AdapterUnsupported = "host_error:adapter_unsupported";
     public const string StreamingUnsupported = "host_error:streaming_unsupported";
+    public const string NoInterceptor = "host_error:no_interceptor";
 }
 
 /// <summary>A single <c>$target</c>-rooted replacement (§5.2).</summary>
@@ -212,14 +213,18 @@ public readonly struct AgentContext(JsonObject json)
     public static implicit operator AgentContext(JsonObject json) => new(json);
 }
 
-/// <summary>Host-side record of one interception (§6, §10).</summary>
+/// <summary>Host-side record of one interception (§6, §10).
+///
+/// Identity-only by design: the identities bind the record to the exact
+/// pre/post-fold context without duplicating the (possibly sensitive)
+/// payload into audit storage. Hosts that need the raw transformed value
+/// log it at the callsite.</summary>
 public sealed record InterceptionRecord(
     InterceptionPoint InterceptionPoint,
     EnforcementMode Mode,
     Verdict Verdict,
     string InputIdentity,
-    string EnforcedIdentity,
-    JsonNode? TransformedTarget = null)
+    string EnforcedIdentity)
 {
     /// <summary>Whether the guarded action executes (§6, §8).</summary>
     public bool Proceeds => Mode == EnforcementMode.EvaluateOnly || Verdict.Decision.Permits();

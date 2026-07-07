@@ -73,6 +73,9 @@ const (
 	ErrApprovalActionMismatch   HostError = "host_error:approval_action_mismatch"
 	ErrAdapterUnsupported       HostError = "host_error:adapter_unsupported"
 	ErrStreamingUnsupported     HostError = "host_error:streaming_unsupported"
+	// ErrNoInterceptor: §7 — an enforce-mode emission with zero registered
+	// interceptors fails closed rather than silently allowing everything.
+	ErrNoInterceptor HostError = "host_error:no_interceptor"
 )
 
 // TransformBody is a single $target-rooted replacement (§5.2).
@@ -135,14 +138,18 @@ func (ctx AgentContext) InterceptionPoint() InterceptionPoint {
 	return InterceptionPoint(hp)
 }
 
-// InterceptionRecord is the host-side record of one hook evaluation (§6, §10).
+// InterceptionRecord is the host-side record of one interception (§6, §10).
+//
+// Identity-only by design: the identities bind the record to the exact
+// pre/post-fold context without duplicating the (possibly sensitive)
+// payload into audit storage. Hosts that need the raw transformed value
+// log it at the callsite.
 type InterceptionRecord struct {
-	InterceptionPoint         InterceptionPoint       `json:"interception_point"`
-	Mode              EnforcementMode `json:"mode"`
-	Verdict           Verdict         `json:"verdict"`
-	InputIdentity     string          `json:"input_identity"`
-	EnforcedIdentity  string          `json:"enforced_identity"`
-	TransformedTarget any             `json:"transformed_target,omitempty"`
+	InterceptionPoint InterceptionPoint `json:"interception_point"`
+	Mode              EnforcementMode   `json:"mode"`
+	Verdict           Verdict           `json:"verdict"`
+	InputIdentity     string            `json:"input_identity"`
+	EnforcedIdentity  string            `json:"enforced_identity"`
 }
 
 // Proceeds reports whether the guarded action executes (§6, §8).

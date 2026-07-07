@@ -5,7 +5,7 @@ package conformance
 
 // Reference in-memory agent + harness.
 //
-// Simplest possible Level-2-conformant agent loop; exists so the CTK
+// Simplest possible conformant agent loop; exists so the CTK
 // can self-test without depending on any real framework. Port of
 // sdk/python/python/agent_hooks/ctk/reference.py.
 
@@ -19,7 +19,7 @@ import (
 	"github.com/responsibleai/agent-hooks/sdk/go/agenthooks"
 )
 
-// ReferenceHarness is a ~120-line Level-2 host used as the CTK
+// ReferenceHarness is a ~120-line conformant host used as the CTK
 // self-test target.
 type ReferenceHarness struct {
 	scenario Scenario
@@ -43,13 +43,17 @@ func (h *ReferenceHarness) Capabilities() map[Capability]struct{} {
 // Setup implements Harness.
 func (h *ReferenceHarness) Setup(
 	scenario Scenario,
-	interceptor agenthooks.Interceptor,
+	interceptors []agenthooks.Interceptor,
 	resolver agenthooks.ApprovalResolver,
 	mode agenthooks.EnforcementMode,
 ) error {
 	h.scenario = scenario
 	h.toolLog = nil
-	h.emitter = agenthooks.NewInterceptionEmitter(mode, resolver).Register(interceptor)
+	em := agenthooks.NewInterceptionEmitter(mode, resolver)
+	for _, i := range interceptors {
+		em.Register(i)
+	}
+	h.emitter = em
 	h.sess++
 	h.builder = agenthooks.NewAgentContextBuilder(
 		"ref-agent", "reference-agent", fmt.Sprintf("sess-%d", h.sess),
@@ -79,10 +83,10 @@ func (h *ReferenceHarness) Run(ctx context.Context) (RunRecord, error) {
 	sort.Strings(toolsRegistered)
 
 	err := func() error {
-		if _, err := em.EmitOrErr(ctx, b.AgentStartup(toolsRegistered)); err != nil {
+		if _, err := em.Emit(ctx, b.AgentStartup(toolsRegistered)); err != nil {
 			return err
 		}
-		if _, err := em.EmitOrErr(ctx, b.Input(s.Input["content"], asString(s.Input["role"]))); err != nil {
+		if _, err := em.Emit(ctx, b.Input(s.Input["content"], asString(s.Input["role"]))); err != nil {
 			return err
 		}
 		messages := []map[string]any{
@@ -93,13 +97,13 @@ func (h *ReferenceHarness) Run(ctx context.Context) (RunRecord, error) {
 			toolCalls := toMapSlice(resp["tool_calls"])
 
 			pre := b.PreModelCall("mock", cloneMsgs(messages))
-			if _, err := em.EmitOrErr(ctx, pre); err != nil {
+			if _, err := em.Emit(ctx, pre); err != nil {
 				return err
 			}
 			// messages may have been transformed.
 			messages = toMapSlice(pre["messages"])
 
-			if _, err := em.EmitOrErr(ctx, b.PostModelCall(
+			if _, err := em.Emit(ctx, b.PostModelCall(
 				"mock", resp["content"], toolCalls, asString(resp["finish_reason"]),
 			)); err != nil {
 				return err
@@ -130,7 +134,7 @@ func (h *ReferenceHarness) Run(ctx context.Context) (RunRecord, error) {
 		}
 		if final != nil {
 			out := b.Output(final)
-			if _, err := em.EmitOrErr(ctx, out); err != nil {
+			if _, err := em.Emit(ctx, out); err != nil {
 				return err
 			}
 			if o, ok := out["output"].(map[string]any); ok {
@@ -153,7 +157,9 @@ func (h *ReferenceHarness) Run(ctx context.Context) (RunRecord, error) {
 	if outcome != Completed {
 		shutdownReason = "error"
 	}
-	if _, err := em.Emit(ctx, b.AgentShutdown(shutdownReason)); err != nil {
+	// Shutdown uses the unchecked variant: a deny at agent_shutdown is
+	// recorded but must not abort RunRecord assembly.
+	if _, err := em.EmitUnchecked(ctx, b.AgentShutdown(shutdownReason)); err != nil {
 		return RunRecord{}, err
 	}
 
@@ -179,7 +185,7 @@ func (h *ReferenceHarness) doToolCall(ctx context.Context, tc map[string]any, me
 	}
 
 	pre := b.PreToolCall(callID, name, cloneArgs(args))
-	if _, err := em.EmitOrErr(ctx, pre); err != nil {
+	if _, err := em.Emit(ctx, pre); err != nil {
 		return err
 	}
 	// args may have been transformed.
@@ -195,7 +201,7 @@ func (h *ReferenceHarness) doToolCall(ctx context.Context, tc map[string]any, me
 	}
 	h.toolLog = append(h.toolLog, ToolInvocation{Name: name, Args: cloneArgs(args)})
 
-	if _, err := em.EmitOrErr(ctx, b.PostToolCall(callID, name, cloneArgs(args), value, isErr)); err != nil {
+	if _, err := em.Emit(ctx, b.PostToolCall(callID, name, cloneArgs(args), value, isErr)); err != nil {
 		return err
 	}
 	*messages = append(*messages, map[string]any{"role": "tool", "content": value})

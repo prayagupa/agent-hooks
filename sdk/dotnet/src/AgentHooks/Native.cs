@@ -53,10 +53,13 @@ internal static partial class Native
     private static partial IntPtr ah_apply_transform(string targetJson, string path, string valueJson);
 
     [LibraryImport(Lib, StringMarshalling = StringMarshalling.Utf8)]
-    private static partial IntPtr ah_combine_verdicts(string verdictsJson);
+    private static partial IntPtr ah_apply_transform_ctx(string ctxJson, string path, string valueJson);
 
     [LibraryImport(Lib, StringMarshalling = StringMarshalling.Utf8)]
-    private static partial IntPtr ah_enforce(string ctxJson, string verdictJson, string mode);
+    private static partial IntPtr ah_validate_transform_ctx(string ctxJson, string path, string valueJson);
+
+    [LibraryImport(Lib, StringMarshalling = StringMarshalling.Utf8)]
+    private static partial IntPtr ah_finalize(string ctxJson, string verdictJson, string mode, string inputIdentity);
 
     // ---- CTK engine (§13.2) ------------------------------------------------
 
@@ -98,9 +101,12 @@ internal static partial class Native
     internal static string ValidateVerdict(string verdictJson) => Unwrap(ah_validate_verdict(verdictJson));
     internal static string ApplyTransform(string targetJson, string path, string valueJson) =>
         Unwrap(ah_apply_transform(targetJson, path, valueJson));
-    internal static string CombineVerdicts(string verdictsJson) => Unwrap(ah_combine_verdicts(verdictsJson));
-    internal static string Enforce(string ctxJson, string verdictJson, string mode) =>
-        Unwrap(ah_enforce(ctxJson, verdictJson, mode));
+    internal static string ApplyTransformCtx(string ctxJson, string path, string valueJson) =>
+        Unwrap(ah_apply_transform_ctx(ctxJson, path, valueJson));
+    internal static string ValidateTransformCtx(string ctxJson, string path, string valueJson) =>
+        Unwrap(ah_validate_transform_ctx(ctxJson, path, valueJson));
+    internal static string Finalize(string ctxJson, string verdictJson, string mode, string inputIdentity) =>
+        Unwrap(ah_finalize(ctxJson, verdictJson, mode, inputIdentity));
 
     internal static string CtkScriptedIntercept(string rulesJson, string ctxJson) =>
         Unwrap(ah_ctk_scripted_intercept(rulesJson, ctxJson));

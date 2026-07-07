@@ -14,20 +14,17 @@ using System.Text.Json.Nodes;
 namespace AgentHooks.Conformance;
 
 public sealed record VectorResult(
-    string Id, string Title, int Level, string Status,
+    string Id, string Title, string Status,
     string Detail, IReadOnlyList<string> Failures);
 
 public static class Runner
 {
     private static readonly JsonSerializerOptions Compact = new() { WriteIndented = false };
 
-    public static IEnumerable<JsonObject> LoadVectors(string directory, int maxLevel = 3)
+    public static IEnumerable<JsonObject> LoadVectors(string directory)
     {
         foreach (var f in Directory.EnumerateFiles(directory, "AH-CTK-*.json").OrderBy(p => p))
-        {
-            var v = (JsonObject)JsonNode.Parse(File.ReadAllText(f))!;
-            if ((int)v["level"]! <= maxLevel) yield return v;
-        }
+            yield return (JsonObject)JsonNode.Parse(File.ReadAllText(f))!;
     }
 
     public static async Task<VectorResult> RunVectorAsync(
@@ -35,7 +32,6 @@ public static class Runner
     {
         var id = (string)vector["id"]!;
         var title = (string)vector["title"]!;
-        var level = (int)vector["level"]!;
         var vectorJson = vector.ToJsonString(Compact);
 
         // Capability skip via core.
@@ -44,12 +40,32 @@ public static class Runner
         var skip = JsonNode.Parse(
             Native.CtkShouldSkip(vectorJson, caps.ToJsonString(Compact)));
         if (skip is JsonValue sv && sv.TryGetValue(out string? reason))
-            return new VectorResult(id, title, level, "skip", reason!, []);
+            return new VectorResult(id, title, "skip", reason!, []);
 
         var scenario = Scenario.FromWire((JsonObject)vector["scenario"]!);
-        var rulesJson = (vector["interceptor_script"] ?? new JsonArray()).ToJsonString(Compact);
+
+        // Multi-interceptor vectors (§7.1 fold-through) use
+        // interceptor_scripts; single-interceptor vectors use
+        // interceptor_script. Only the FIRST interceptor records:
+        // expect.interceptions describes each emission as the
+        // first-registered interceptor saw it. An empty
+        // interceptor_scripts registers zero interceptors (§7
+        // fail-closed vector).
+        List<JsonArray> scripts;
+        if (vector["interceptor_scripts"] is JsonArray multi)
+            scripts = multi.Select(s => (JsonArray)s!.DeepClone()).ToList();
+        else
+            scripts = [(JsonArray)(vector["interceptor_script"] ?? new JsonArray()).DeepClone()];
+
         var recorded = new List<JsonObject>();
-        var interceptor = new RecordingScriptedInterceptor(rulesJson, recorded);
+        var interceptors = new List<IInterceptor>();
+        if (scripts.Count > 0)
+        {
+            interceptors.Add(new RecordingScriptedInterceptor(
+                scripts[0].ToJsonString(Compact), recorded));
+            foreach (var s in scripts.Skip(1))
+                interceptors.Add(new ScriptedInterceptor(s.ToJsonString(Compact)));
+        }
 
         var approval = vector["approval_script"] as JsonArray;
         IApprovalResolver? resolver = approval is { Count: > 0 }
@@ -59,7 +75,7 @@ public static class Runner
         var mode = (string?)vector["mode"] == "evaluate_only"
             ? EnforcementMode.EvaluateOnly : EnforcementMode.Enforce;
 
-        harness.Setup(scenario, interceptor, resolver, mode);
+        harness.Setup(scenario, interceptors, resolver, mode);
         RunRecord rr;
         try
         {
@@ -67,7 +83,7 @@ public static class Runner
         }
         catch (Exception e)
         {
-            return new VectorResult(id, title, level, "fail", "",
+            return new VectorResult(id, title, "fail", "",
                 [$"harness.RunAsync raised: {e}"]);
         }
         finally
@@ -83,7 +99,6 @@ public static class Runner
         return new VectorResult(
             (string)result["id"]!,
             (string)result["title"]!,
-            (int)result["level"]!,
             (string)result["status"]!,
             (string?)result["detail"] ?? "",
             (result["failures"] as JsonArray)?.Select(n => (string)n!).ToList() ?? []);
@@ -109,17 +124,29 @@ public static class Runner
         return o.ToJsonString(Compact);
     }
 
-    /// <summary>Records every ctx (deep copy) then replays the vector's
-    /// interceptor_script via the Rust core.</summary>
-    private sealed class RecordingScriptedInterceptor(
-        string rulesJson, List<JsonObject> recorded) : IInterceptor
+    /// <summary>Replays one interceptor rule list via the Rust core.</summary>
+    private class ScriptedInterceptor(string rulesJson) : IInterceptor
     {
-        public ValueTask<Verdict> InterceptAsync(AgentContext ctx, CancellationToken ct = default)
+        protected readonly string RulesJson = rulesJson;
+
+        public virtual ValueTask<Verdict> InterceptAsync(
+            AgentContext ctx, CancellationToken ct = default)
+        {
+            var w = (JsonObject)JsonNode.Parse(
+                Native.CtkScriptedIntercept(RulesJson, ctx.Json.ToJsonString(Compact)))!;
+            return ValueTask.FromResult(Verdict.FromWire(w));
+        }
+    }
+
+    /// <summary>Records every ctx (deep copy) then replays the rules.</summary>
+    private sealed class RecordingScriptedInterceptor(
+        string rulesJson, List<JsonObject> recorded) : ScriptedInterceptor(rulesJson)
+    {
+        public override ValueTask<Verdict> InterceptAsync(
+            AgentContext ctx, CancellationToken ct = default)
         {
             recorded.Add((JsonObject)ctx.Json.DeepClone());
-            var w = (JsonObject)JsonNode.Parse(
-                Native.CtkScriptedIntercept(rulesJson, ctx.Json.ToJsonString(Compact)))!;
-            return ValueTask.FromResult(Verdict.FromWire(w));
+            return base.InterceptAsync(ctx, ct);
         }
     }
 

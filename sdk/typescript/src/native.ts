@@ -17,8 +17,9 @@ const binding = require("../binding.js") as {
   contextIdentity(ctxJson: string): string;
   validateVerdict(verdictJson: string): string;
   applyTransform(targetJson: string, path: string, valueJson: string): string;
-  combineVerdicts(verdictsJson: string): string;
-  enforce(ctxJson: string, verdictJson: string, mode: string): string;
+  applyTransformCtx(ctxJson: string, path: string, valueJson: string): string;
+  validateTransformCtx(ctxJson: string, path: string, valueJson: string): string;
+  finalize(ctxJson: string, verdictJson: string, mode: string, inputIdentity: string): string;
   ctkScriptedIntercept(rulesJson: string, ctxJson: string): string;
   ctkScriptedResolve(rulesJson: string, ctxJson: string, identity: string): string;
   ctkShouldSkip(vectorJson: string, capsJson: string): string;
@@ -56,8 +57,9 @@ export const native = {
   contextIdentity: wrap(binding.contextIdentity),
   validateVerdict: wrap(binding.validateVerdict),
   applyTransform: wrap(binding.applyTransform),
-  combineVerdicts: wrap(binding.combineVerdicts),
-  enforce: wrap(binding.enforce),
+  applyTransformCtx: wrap(binding.applyTransformCtx),
+  validateTransformCtx: wrap(binding.validateTransformCtx),
+  finalize: wrap(binding.finalize),
   ctkScriptedIntercept: wrap(binding.ctkScriptedIntercept),
   ctkScriptedResolve: wrap(binding.ctkScriptedResolve),
   ctkShouldSkip: wrap(binding.ctkShouldSkip),

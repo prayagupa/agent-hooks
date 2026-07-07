@@ -8,14 +8,14 @@ and is exposed through every binding as four functions:
 | `ctk_should_skip(vector, caps)` | Capability check; returns `null` or a skip-reason string |
 | `ctk_scripted_intercept(rules, ctx)` | Evaluate `interceptor_script` against a context; returns a verdict |
 | `ctk_scripted_resolve(rules, ctx, identity)` | Evaluate `approval_script`; returns `{outcome, context_identity, verdict?}` |
-| `ctk_assert(vector, recorded, run_record)` | Run all `expect` assertions; returns `{id, title, level, status, failures}` |
+| `ctk_assert(vector, recorded, run_record)` | Run all `expect` assertions; returns `{id, title, status, failures}` |
 
 A per-language runner is the ~60 lines below. Only steps 3 and 5 touch
 native code (the `Harness` protocol); everything else is a straight FFI
 call. `sdk/python/python/agent_hooks/ctk/runner.py` is the reference.
 
 ```
-for each vector file in conformance/vectors/*.json at level <= N:
+for each vector file in conformance/vectors/*.json:
   1.  skip = ctk_should_skip(vector, harness.capabilities)
       if skip: yield {status:"skip", detail:skip}; continue
 
@@ -27,7 +27,7 @@ for each vector file in conformance/vectors/*.json at level <= N:
       resolver = req =>
         ctk_scripted_resolve(vector.approval_script, req.context, req.context_identity)
 
-  3.  harness.setup(vector.scenario, interceptor,
+  3.  harness.setup(vector.scenario, interceptors,
                     vector.approval_script ? resolver : null,
                     vector.mode ?? "enforce")
 

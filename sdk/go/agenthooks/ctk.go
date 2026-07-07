@@ -77,7 +77,6 @@ func CtkShouldSkip(vectorJSON string, caps []string) (string, error) {
 type CtkVectorResult struct {
 	ID       string   `json:"id"`
 	Title    string   `json:"title"`
-	Level    int      `json:"level"`
 	Status   string   `json:"status"` // "pass" | "fail" | "skip"
 	Detail   string   `json:"detail"`
 	Failures []string `json:"failures"`

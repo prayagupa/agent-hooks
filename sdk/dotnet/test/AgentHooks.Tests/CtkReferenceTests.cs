@@ -1,6 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-// CTK self-test: run all Level<=2 vectors against the in-tree
+// CTK self-test: run all vectors against the in-tree
 // ReferenceHarness. Assertion engine is the Rust core; this proves
 // the .NET emitter, builder, runner, and harness wire correctly.
 
@@ -20,7 +20,7 @@ public sealed class CtkReferenceTests
     }
 
     public static IEnumerable<object[]> Vectors() =>
-        Runner.LoadVectors(VectorsDir(), maxLevel: 2)
+        Runner.LoadVectors(VectorsDir())
               .Select(v => new object[] { (string)v["id"]!, v });
 
     [Theory]

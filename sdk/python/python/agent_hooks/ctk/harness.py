@@ -117,7 +117,7 @@ class Harness(Protocol):
     def setup(
         self,
         scenario: Scenario,
-        interceptor: Interceptor,
+        interceptors: list[Interceptor],
         resolver: ApprovalResolver | None,
         mode: EnforcementMode,
     ) -> None: ...

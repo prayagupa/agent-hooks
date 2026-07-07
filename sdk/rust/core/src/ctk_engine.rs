@@ -150,7 +150,6 @@ pub struct RunRecord {
 pub struct VectorResult {
     pub id: String,
     pub title: String,
-    pub level: u8,
     pub status: &'static str, // "pass" | "fail" | "skip"
     pub detail: String,
     pub failures: Vec<String>,
@@ -360,7 +359,6 @@ pub fn should_skip(vector: &Value, harness_caps: &[&str]) -> Option<String> {
 pub fn assert_vector(vector: &Value, recorded: &[Value], rr: &RunRecord) -> VectorResult {
     let id = vector["id"].as_str().unwrap_or("").to_owned();
     let title = vector["title"].as_str().unwrap_or("").to_owned();
-    let level = vector["level"].as_u64().unwrap_or(0) as u8;
 
     let mut failures = Vec::new();
     assert_interceptions(&vector["expect"], recorded, &mut failures);
@@ -371,7 +369,6 @@ pub fn assert_vector(vector: &Value, recorded: &[Value], rr: &RunRecord) -> Vect
     VectorResult {
         id,
         title,
-        level,
         status: if failures.is_empty() { "pass" } else { "fail" },
         detail: String::new(),
         failures,
@@ -427,7 +424,7 @@ mod tests {
     #[test]
     fn assert_vector_pass() {
         let vector = json!({
-            "id": "T", "title": "t", "level": 1,
+            "id": "T", "title": "t",
             "expect": {
                 "interceptions": [{"interception_point": "input"}],
                 "sequence_strict": true,

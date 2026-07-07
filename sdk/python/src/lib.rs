@@ -53,13 +53,34 @@ fn apply_transform(
 }
 
 #[pyfunction]
-fn combine_verdicts(py: Python<'_>, verdicts_json: &str) -> PyResult<String> {
-    core::combine_verdicts(verdicts_json).map_err(|e| map_err(py, e))
+fn apply_transform_ctx(
+    py: Python<'_>,
+    ctx_json: &str,
+    path: &str,
+    value_json: &str,
+) -> PyResult<String> {
+    core::apply_transform_ctx(ctx_json, path, value_json).map_err(|e| map_err(py, e))
 }
 
 #[pyfunction]
-fn enforce(py: Python<'_>, ctx_json: &str, verdict_json: &str, mode: &str) -> PyResult<String> {
-    core::enforce(ctx_json, verdict_json, mode).map_err(|e| map_err(py, e))
+fn validate_transform_ctx(
+    py: Python<'_>,
+    ctx_json: &str,
+    path: &str,
+    value_json: &str,
+) -> PyResult<String> {
+    core::validate_transform_ctx(ctx_json, path, value_json).map_err(|e| map_err(py, e))
+}
+
+#[pyfunction]
+fn finalize(
+    py: Python<'_>,
+    ctx_json: &str,
+    verdict_json: &str,
+    mode: &str,
+    input_identity: &str,
+) -> PyResult<String> {
+    core::finalize(ctx_json, verdict_json, mode, input_identity).map_err(|e| map_err(py, e))
 }
 
 // ---- CTK engine (§13.2) ---------------------------------------------------
@@ -107,8 +128,9 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(context_identity, m)?)?;
     m.add_function(wrap_pyfunction!(validate_verdict, m)?)?;
     m.add_function(wrap_pyfunction!(apply_transform, m)?)?;
-    m.add_function(wrap_pyfunction!(combine_verdicts, m)?)?;
-    m.add_function(wrap_pyfunction!(enforce, m)?)?;
+    m.add_function(wrap_pyfunction!(apply_transform_ctx, m)?)?;
+    m.add_function(wrap_pyfunction!(validate_transform_ctx, m)?)?;
+    m.add_function(wrap_pyfunction!(finalize, m)?)?;
     m.add_function(wrap_pyfunction!(ctk_scripted_intercept, m)?)?;
     m.add_function(wrap_pyfunction!(ctk_scripted_resolve, m)?)?;
     m.add_function(wrap_pyfunction!(ctk_should_skip, m)?)?;

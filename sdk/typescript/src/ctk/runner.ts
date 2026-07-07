@@ -27,30 +27,35 @@ import type { Harness, RunRecord, Scenario } from "./index";
 export interface VectorResult {
   id: string;
   title: string;
-  level: number;
   status: "pass" | "fail" | "skip";
   detail: string;
   failures: string[];
 }
 
-export function loadVectors(dir: string, maxLevel = 3): JsonValue[] {
+export function loadVectors(dir: string): JsonValue[] {
   return readdirSync(dir)
     .filter((f) => /^AH-CTK-.*\.json$/.test(f))
     .sort()
-    .map((f) => JSON.parse(readFileSync(join(dir, f), "utf8")) as JsonValue)
-    .filter((v) => (v as { level: number }).level <= maxLevel);
+    .map((f) => JSON.parse(readFileSync(join(dir, f), "utf8")) as JsonValue);
 }
 
-/** Wraps `ctk_scripted_intercept` and records every ctx passed. */
-class RecordingInterceptor implements Interceptor {
-  readonly recorded: AgentContext[] = [];
-  private readonly rulesJson: string;
+/** Replays one `interceptor_script` rule list via the Rust core. */
+class ScriptedInterceptor implements Interceptor {
+  protected readonly rulesJson: string;
   constructor(rules: JsonValue) {
     this.rulesJson = JSON.stringify(rules);
   }
   intercept(ctx: AgentContext): Verdict {
-    this.recorded.push(JSON.parse(JSON.stringify(ctx)));
     return JSON.parse(native.ctkScriptedIntercept(this.rulesJson, JSON.stringify(ctx)));
+  }
+}
+
+/** Wraps the scripted interceptor and records every ctx passed. */
+class RecordingInterceptor extends ScriptedInterceptor {
+  readonly recorded: AgentContext[] = [];
+  override intercept(ctx: AgentContext): Verdict {
+    this.recorded.push(JSON.parse(JSON.stringify(ctx)));
+    return super.intercept(ctx);
   }
 }
 
@@ -86,19 +91,27 @@ export async function runVector(harness: Harness, vector: JsonValue): Promise<Ve
     return {
       id: v.id as string,
       title: v.title as string,
-      level: v.level as number,
       status: "skip",
       detail: skip,
       failures: [],
     };
   }
 
-  const interceptor = new RecordingInterceptor(v.interceptor_script);
+  // Multi-interceptor vectors (§7.1 fold-through) use interceptor_scripts;
+  // single-interceptor vectors use interceptor_script. Only the FIRST
+  // interceptor records: expect.interceptions describes each emission as
+  // the first-registered interceptor saw it. An empty interceptor_scripts
+  // registers zero interceptors (§7 fail-closed vector).
+  const scripts = (v.interceptor_scripts as JsonValue[] | undefined) ?? [v.interceptor_script];
+  const first = scripts.length > 0 ? new RecordingInterceptor(scripts[0]) : null;
+  const interceptors: Interceptor[] = first ? [first] : [];
+  for (const s of scripts.slice(1)) interceptors.push(new ScriptedInterceptor(s));
+
   const approval = v.approval_script as JsonValue[] | undefined;
   const resolver = approval ? new ScriptedResolver(approval) : null;
   const mode = ((v.mode as string) ?? "enforce") as EnforcementMode;
 
-  harness.setup(v.scenario as unknown as Scenario, interceptor, resolver, mode);
+  harness.setup(v.scenario as unknown as Scenario, interceptors, resolver, mode);
   let rr: RunRecord;
   try {
     rr = await harness.run();
@@ -106,7 +119,6 @@ export async function runVector(harness: Harness, vector: JsonValue): Promise<Ve
     return {
       id: v.id as string,
       title: v.title as string,
-      level: v.level as number,
       status: "fail",
       detail: "",
       failures: [`harness.run threw: ${e}`],
@@ -116,7 +128,7 @@ export async function runVector(harness: Harness, vector: JsonValue): Promise<Ve
   }
 
   return JSON.parse(
-    native.ctkAssert(vectorJson, JSON.stringify(interceptor.recorded), runRecordToWire(rr)),
+    native.ctkAssert(vectorJson, JSON.stringify(first?.recorded ?? []), runRecordToWire(rr)),
   );
 }
 

@@ -3,7 +3,7 @@
 /**
  * Reference in-memory agent + harness.
  *
- * The simplest possible Level-2-conformant agent loop; exists so the
+ * The simplest possible conformant agent loop; exists so the
  * CTK can self-test without a real framework. Port of
  * `sdk/python/python/agent_hooks/ctk/reference.py`.
  */
@@ -34,13 +34,15 @@ export class ReferenceHarness implements Harness {
 
   setup(
     scenario: Scenario,
-    interceptor: Interceptor,
+    interceptors: Interceptor[],
     resolver: ApprovalResolver | null,
     mode: EnforcementMode,
   ): void {
     this.scenario = scenario;
     this.toolLog = [];
-    this.emitter = new InterceptionEmitter(mode, resolver).register(interceptor);
+    const em = new InterceptionEmitter(mode, resolver);
+    for (const i of interceptors) em.register(i);
+    this.emitter = em;
     this.builder = new AgentContextBuilder({
       agentId: "ref-agent",
       framework: "reference-agent",
@@ -68,8 +70,8 @@ export class ReferenceHarness implements Harness {
     };
 
     try {
-      await em.emitOrThrow(b.agentStartup([...tools.keys()].sort()));
-      await em.emitOrThrow(b.input(s.input.content, s.input.role));
+      await em.emit(b.agentStartup([...tools.keys()].sort()));
+      await em.emit(b.input(s.input.content, s.input.role));
 
       let messages: Array<{ role: string; content: JsonValue }> = [
         { role: s.input.role, content: s.input.content },
@@ -78,10 +80,10 @@ export class ReferenceHarness implements Harness {
       for (const step of s.model_script ?? []) {
         const resp = step.respond;
         const preCtx = b.preModelCall("mock", [...messages]);
-        await em.emitOrThrow(preCtx);
+        await em.emit(preCtx);
         messages = preCtx.messages as typeof messages;
 
-        await em.emitOrThrow(
+        await em.emit(
           b.postModelCall("mock", resp.content, resp.tool_calls, resp.finish_reason),
         );
 
@@ -89,11 +91,11 @@ export class ReferenceHarness implements Harness {
           for (const tc of resp.tool_calls) {
             try {
               const preTc = b.preToolCall(tc.id, tc.name, { ...tc.args });
-              await em.emitOrThrow(preTc);
+              await em.emit(preTc);
               const args = (preTc.tool_call as { args: ToolArgs }).args;
               const { value, is_error } = invokeTool(tc.name, args);
               this.toolLog.push({ name: tc.name, args: { ...args } });
-              await em.emitOrThrow(b.postToolCall(tc.id, tc.name, { ...args }, value, is_error));
+              await em.emit(b.postToolCall(tc.id, tc.name, { ...args }, value, is_error));
               messages.push({ role: "tool", content: value });
             } catch (e) {
               if (e instanceof InterceptionBlocked) {
@@ -112,7 +114,7 @@ export class ReferenceHarness implements Harness {
 
       if (final !== null) {
         const outCtx = b.output(final);
-        await em.emitOrThrow(outCtx);
+        await em.emit(outCtx);
         final = (outCtx.output as { content: JsonValue }).content;
       }
     } catch (e) {
@@ -124,7 +126,7 @@ export class ReferenceHarness implements Harness {
       }
     }
 
-    await em.emit(b.agentShutdown(outcome === "completed" ? "completed" : "error"));
+    await em.emitUnchecked(b.agentShutdown(outcome === "completed" ? "completed" : "error"));
 
     return {
       outcome,

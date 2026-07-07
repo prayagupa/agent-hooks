@@ -77,6 +77,7 @@ class HostError(str, Enum):
     APPROVAL_UNRESOLVED = "host_error:approval_unresolved"
     APPROVAL_ACTION_MISMATCH = "host_error:approval_action_mismatch"
     ADAPTER_UNSUPPORTED = "host_error:adapter_unsupported"
+    NO_INTERCEPTOR = "host_error:no_interceptor"
     STREAMING_UNSUPPORTED = "host_error:streaming_unsupported"
 
 
@@ -229,7 +230,6 @@ class InterceptionRecord:
     verdict: Verdict
     input_identity: str
     enforced_identity: str
-    transformed_target: Any | None = None
 
     @property
     def proceeds(self) -> bool:
@@ -266,5 +266,4 @@ class InterceptionRecord:
             verdict=verdict,
             input_identity=obj["input_identity"],
             enforced_identity=obj["enforced_identity"],
-            transformed_target=obj.get("transformed_target"),
         )

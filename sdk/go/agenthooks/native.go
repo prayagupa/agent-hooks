@@ -98,20 +98,43 @@ func nativeApplyTransform(targetJSON, path, valueJSON string) (string, error) {
 	return unwrap(C.ah_apply_transform(ct, cp, cv))
 }
 
-func nativeCombineVerdicts(verdictsJSON string) (string, error) {
-	c, free := cstr(verdictsJSON)
-	defer free()
-	return unwrap(C.ah_combine_verdicts(c))
+// nativeApplyTransformCtx applies one transform to the context's target
+// and its L1 alias (§7.1 fold-through), returning the updated context.
+func nativeApplyTransformCtx(ctxJSON, path, valueJSON string) (string, error) {
+	cc, fc := cstr(ctxJSON)
+	defer fc()
+	cp, fp := cstr(path)
+	defer fp()
+	cv, fv := cstr(valueJSON)
+	defer fv()
+	return unwrap(C.ah_apply_transform_ctx(cc, cp, cv))
 }
 
-func nativeEnforce(ctxJSON, verdictJSON, mode string) (string, error) {
+// nativeValidateTransformCtx validates a transform against the context's
+// current target without applying it (§8 evaluate_only).
+func nativeValidateTransformCtx(ctxJSON, path, valueJSON string) (string, error) {
+	cc, fc := cstr(ctxJSON)
+	defer fc()
+	cp, fp := cstr(path)
+	defer fp()
+	cv, fv := cstr(valueJSON)
+	defer fv()
+	return unwrap(C.ah_validate_transform_ctx(cc, cp, cv))
+}
+
+// nativeFinalize builds the InterceptionRecord for one completed
+// interception (§6/§10). inputIdentity MUST have been computed from the
+// context before interceptor dispatch.
+func nativeFinalize(ctxJSON, verdictJSON, mode, inputIdentity string) (string, error) {
 	cc, fc := cstr(ctxJSON)
 	defer fc()
 	cv, fv := cstr(verdictJSON)
 	defer fv()
 	cm, fm := cstr(mode)
 	defer fm()
-	return unwrap(C.ah_enforce(cc, cv, cm))
+	ci, fi := cstr(inputIdentity)
+	defer fi()
+	return unwrap(C.ah_finalize(cc, cv, cm, ci))
 }
 
 // ---- CTK engine (§13.2) ---------------------------------------------------

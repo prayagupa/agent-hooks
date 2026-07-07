@@ -60,17 +60,7 @@ func ValidateVerdict(v Verdict) error {
 	return err
 }
 
-// CombineVerdicts combines an ordered slice of verdicts per §7.1.
-// Implemented by the Rust core.
-func CombineVerdicts(vs []Verdict) (Verdict, error) {
-	b, err := json.Marshal(vs)
-	if err != nil {
-		return Verdict{}, err
-	}
-	out, err := nativeCombineVerdicts(string(b))
-	if err != nil {
-		return Verdict{}, err
-	}
-	var v Verdict
-	return v, json.Unmarshal([]byte(out), &v)
-}
+// Verdict combination (§7.1) is sequential fold-through implemented in
+// the emitter dispatch loop; the per-step primitives live in the core
+// (nativeApplyTransformCtx / nativeValidateTransformCtx) and the shared
+// semantics are enforced by the cross-language CTK vectors.

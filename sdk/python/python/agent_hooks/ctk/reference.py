@@ -2,7 +2,7 @@
 # Licensed under the MIT License.
 """Reference in-memory agent + harness.
 
-This is the simplest possible Level-2-conformant agent loop: it exists so the
+This is the simplest possible conformant agent loop: it exists so the
 CTK can self-test without depending on any real framework.
 """
 from __future__ import annotations
@@ -20,7 +20,7 @@ from agent_hooks.interceptor import Interceptor
 
 
 class ReferenceHarness:
-    """A ~100-line Level-2 host. Self-test target for the CTK."""
+    """A ~100-line conformant host. Self-test target for the CTK."""
 
     name = "reference-agent"
     capabilities: ClassVar[frozenset[Capability]] = frozenset(
@@ -38,13 +38,16 @@ class ReferenceHarness:
     def setup(
         self,
         scenario: Scenario,
-        interceptor: Interceptor,
+        interceptors: list[Interceptor],
         resolver: ApprovalResolver | None,
         mode: EnforcementMode,
     ) -> None:
         self._scenario = scenario
         self._tool_log = []
-        self._emitter = InterceptionEmitter(mode=mode, resolver=resolver).register(interceptor)
+        em = InterceptionEmitter(mode=mode, resolver=resolver)
+        for i in interceptors:
+            em.register(i)
+        self._emitter = em
         self._builder = AgentContextBuilder(
             agent_id="ref-agent",
             framework="reference-agent",
@@ -57,8 +60,8 @@ class ReferenceHarness:
         outcome = RunOutcome.COMPLETED
         final: Any | None = None
         try:
-            await em.emit_or_raise(b.agent_startup(tools_registered=sorted(s.tools)))
-            await em.emit_or_raise(
+            await em.emit(b.agent_startup(tools_registered=sorted(s.tools)))
+            await em.emit(
                 b.input(content=s.input["content"], role=s.input["role"])
             )
             messages: list[dict[str, Any]] = [
@@ -66,9 +69,9 @@ class ReferenceHarness:
             ]
             for resp in s.model_script:
                 ctx = b.pre_model_call(model_id="mock", messages=list(messages))
-                await em.emit_or_raise(ctx)
+                await em.emit(ctx)
                 messages = ctx["messages"]  # may be transformed
-                await em.emit_or_raise(
+                await em.emit(
                     b.post_model_call(
                         model_id="mock",
                         content=resp.content,
@@ -93,12 +96,12 @@ class ReferenceHarness:
                 messages.append({"role": "assistant", "content": resp.content or ""})
             if final is not None:
                 ctx = b.output(content=final)
-                await em.emit_or_raise(ctx)
+                await em.emit(ctx)
                 final = ctx["output"]["content"]
         except InterceptionBlocked:
             outcome = RunOutcome.BLOCKED
             final = None
-        await em.emit(
+        await em.emit_unchecked(
             b.agent_shutdown(
                 reason="completed" if outcome is RunOutcome.COMPLETED else "error"
             )
@@ -123,12 +126,12 @@ class ReferenceHarness:
         assert self._scenario and self._emitter and self._builder
         s, em, b = self._scenario, self._emitter, self._builder
         ctx = b.pre_tool_call(call_id=tc["id"], name=tc["name"], args=dict(tc["args"]))
-        await em.emit_or_raise(ctx)
+        await em.emit(ctx)
         args = ctx["tool_call"]["args"]  # post-transform
         spec = s.tools[tc["name"]]
         value, is_error = spec.invoke(args)
         self._tool_log.append({"name": tc["name"], "args": dict(args)})
-        await em.emit_or_raise(
+        await em.emit(
             b.post_tool_call(
                 call_id=tc["id"], name=tc["name"], args=dict(args), value=value, is_error=is_error
             )

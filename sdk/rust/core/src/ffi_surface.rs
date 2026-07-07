@@ -13,8 +13,8 @@
 //! carrying both.
 
 use crate::{
-    canonical, enforce as enforce_step, path, types::EnforcementMode, verdict, AgentContext,
-    HostError, Verdict,
+    canonical, enforce as enforce_mod, path, types::EnforcementMode, verdict, AgentContext,
+    HostError, Transform,
 };
 use serde_json::Value;
 
@@ -62,41 +62,60 @@ pub fn apply_transform(
     Ok(serde_json::to_string(&result).expect("target serialize"))
 }
 
-/// §7.1: combine an ordered array of verdicts. Input is a JSON array of
-/// verdict objects (already validated); output is the combined verdict JSON.
-pub fn combine_verdicts(verdicts_json: &str) -> Result<String, FfiError> {
-    let arr: Vec<Value> = serde_json::from_str(verdicts_json)
-        .map_err(|e| err(HostError::VerdictInvalid, format!("verdicts: {e}")))?;
-    let vs: Vec<Verdict> = arr
-        .iter()
-        .map(verdict::from_wire)
-        .collect::<Result<_, _>>()
-        .map_err(|(e, d)| err(e, d))?;
-    Ok(serde_json::to_string(&verdict::combine(&vs)).expect("verdict serialize"))
-}
-
-/// §6/§8/§10: apply the enforcement step to a combined verdict. Returns
-/// `{"record": InterceptionRecord, "ctx": AgentContext}` as JSON — the
-/// context is returned because `enforce` may have written the transformed
-/// target back into it and FFI callers passed a copy.
-///
-/// The verdict is deserialized permissively (not via `from_wire`) because
-/// the caller may pass a host-synthesized `host_error:*` deny that the
-/// wrapper produced during dispatch (§6.3); validation already happened
-/// per interceptor.
-pub fn enforce(ctx_json: &str, verdict_json: &str, mode: &str) -> Result<String, FfiError> {
+/// §7.1 fold-through: apply one transform to the context's `target`
+/// (and its L1 alias) so the next interceptor sees the effect. Returns
+/// the updated context JSON.
+pub fn apply_transform_ctx(
+    ctx_json: &str,
+    path_str: &str,
+    value_json: &str,
+) -> Result<String, FfiError> {
     let mut ctx: AgentContext = serde_json::from_str(ctx_json)
         .map_err(|e| err(HostError::ContextInvalid, format!("ctx: {e}")))?;
-    let v: Verdict = serde_json::from_str(verdict_json)
+    let value = parse_json(value_json, "value")?;
+    let t = Transform { path: path_str.to_owned(), value };
+    enforce_mod::apply_transform_to_ctx(&mut ctx, &t).map_err(|e| err(e, path_str))?;
+    Ok(serde_json::to_string(&ctx).expect("ctx serialize"))
+}
+
+/// §8 `evaluate_only`: validate a transform against the context's
+/// current target without applying it. Returns `"null"` on success.
+pub fn validate_transform_ctx(
+    ctx_json: &str,
+    path_str: &str,
+    value_json: &str,
+) -> Result<String, FfiError> {
+    let ctx: AgentContext = serde_json::from_str(ctx_json)
+        .map_err(|e| err(HostError::ContextInvalid, format!("ctx: {e}")))?;
+    let value = parse_json(value_json, "value")?;
+    let t = Transform { path: path_str.to_owned(), value };
+    enforce_mod::validate_transform(&ctx, &t).map_err(|e| err(e, path_str))?;
+    Ok("null".to_owned())
+}
+
+/// §6/§10: build the `InterceptionRecord` for one completed
+/// interception. `input_identity` MUST have been computed via
+/// [`context_identity`] before interceptor dispatch; transforms were
+/// already applied during the §7.1 fold via [`apply_transform_ctx`].
+/// The verdict is deserialized permissively because the emitter may
+/// pass a host-synthesized `host_error:*` deny (§6.3).
+pub fn finalize(
+    ctx_json: &str,
+    verdict_json: &str,
+    mode: &str,
+    input_identity: &str,
+) -> Result<String, FfiError> {
+    let ctx: AgentContext = serde_json::from_str(ctx_json)
+        .map_err(|e| err(HostError::ContextInvalid, format!("ctx: {e}")))?;
+    let v: crate::Verdict = serde_json::from_str(verdict_json)
         .map_err(|e| err(HostError::VerdictInvalid, format!("verdict: {e}")))?;
     let mode = match mode {
         "enforce" => EnforcementMode::Enforce,
         "evaluate_only" => EnforcementMode::EvaluateOnly,
         _ => return Err(err(HostError::ContextInvalid, format!("mode: {mode}"))),
     };
-    let record = enforce_step::enforce(&mut ctx, v, mode);
-    let out = serde_json::json!({ "record": record, "ctx": ctx });
-    Ok(serde_json::to_string(&out).expect("enforce serialize"))
+    let record = enforce_mod::finalize(&ctx, v, mode, input_identity);
+    Ok(serde_json::to_string(&record).expect("record serialize"))
 }
 
 /// Version stamp for binding sanity checks.
