@@ -22,7 +22,7 @@ those.
 agent-hooks is a cooperative contract, **not a security boundary**. The
 host is fully trusted; interceptors run in-process with full data
 access; the eight interception points do not guarantee complete
-mediation; and a conformance level is not a security certification.
+mediation; and a conformance claim is not a security certification.
 See [`SECURITY.md`](SECURITY.md) and
 [spec §1.4](spec/AGENT-HOOKS-0.1.md#14-trust-model-and-non-goals) for
 the normative statement.

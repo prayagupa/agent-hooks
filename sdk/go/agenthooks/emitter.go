@@ -216,6 +216,7 @@ func (e *InterceptionEmitter) dispatch(ctx context.Context, actx AgentContext) (
 	}
 
 	combined := AllowVerdict
+	var labels []string
 	var decidedBy *int
 	for icIdx, ic := range e.interceptors {
 		// §7.1/N05: each interceptor gets its own deep copy — an
@@ -257,6 +258,22 @@ func (e *InterceptionEmitter) dispatch(ctx context.Context, actx AgentContext) (
 			idx := icIdx
 			decidedBy = &idx
 		}
+		// §7.1 step 5: union permit-verdict labels, first-seen order.
+		for _, l := range v.ResultLabels {
+			seen := false
+			for _, have := range labels {
+				if have == l {
+					seen = true
+					break
+				}
+			}
+			if !seen {
+				labels = append(labels, l)
+			}
+		}
+	}
+	if len(labels) > 0 {
+		combined.ResultLabels = labels
 	}
 	return combined, decidedBy
 }

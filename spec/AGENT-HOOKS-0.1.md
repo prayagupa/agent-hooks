@@ -551,7 +551,11 @@ Interceptors compose by folding transforms through the dispatch order:
    corresponding `host_error:*` reason and short-circuits.
 5. If no block occurred, the combined verdict recorded is the last
    `transform` returned; otherwise `warn` if any interceptor returned
-   `warn`; otherwise `allow`. `input_identity` is computed before step
+   `warn`; otherwise `allow`. The combined verdict's `result_labels`
+   is the first-seen-ordered union of the labels returned by every
+   permit verdict in the fold (§5.4 labels from superseded verdicts
+   are not discarded). Labels are dropped when the emission does not
+   proceed, per §5.4. `input_identity` is computed before step
    1 and `enforced_identity` after the fold (§10.2), so the record
    captures the cumulative effect regardless of which single verdict is
    recorded.
@@ -756,10 +760,17 @@ recorded in `conformance/CLAIMS.md`.
 
 ## 14. Security considerations
 
+This section is informative except where marked. The trust boundary
+itself is normative in §1.4: agent-hooks is not a security boundary,
+does not sandbox, does not claim complete mediation, and conformance is
+not a certification. The companion threat model with
+threat→mitigation→test traceability is `docs/THREAT-MODEL.md`.
+
+
 - An interceptor receives the full `target`, which may contain user PII, secrets in
   tool arguments, or model output. Hosts SHOULD redact known-sensitive fields
   before constructing `AgentContext` when the interceptor's trust level does not
-  warrant raw access, and MUST document any redaction in
+  warrant raw access, and SHOULD document any redaction in
   `extensions.<host>.redacted: ["<jsonpath>", ...]`.
 - `evidence.verification_pointers` are URIs a host MUST NOT dereference
   automatically; doing so is an SSRF vector.

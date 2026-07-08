@@ -16,9 +16,9 @@ agent-hooks is a **cooperative contract**, not a security boundary.
 - **Not a sandbox.** Tool and model calls execute with whatever privilege the host process has. agent-hooks does not isolate them.
 - **Not a reference monitor.** The eight interception points cover the paths a conformant host wires. A framework may expose direct tool execution, plugin code, or background tasks that never reach `pre_tool_call`; the spec does not claim complete mediation and the CTK cannot detect bypass paths.
 - **Not an authentication or isolation layer for interceptors.** All registered interceptors are one trust class. The spec does not define how a host authenticates them or restricts what they may return.
-- **Not a security certification.** A conformance level (§13) attests that the host adapter honours the verdict contract under CTK conditions with mocked model and tools. It does not test adversarial bypass, does not assure the production code path matches the harness, and says nothing about the interceptors registered in production.
+- **Not a security certification.** A conformance claim (§13) attests that the host adapter honours the verdict contract under CTK conditions with mocked model and tools. It does not test adversarial bypass, does not assure the production code path matches the harness, and says nothing about the interceptors registered in production.
 
-The normative statement is [spec §1.4 and §14](spec/AGENT-HOOKS-0.1.md#14-trust-model-and-non-goals).
+The normative statement is [spec §1.4](spec/AGENT-HOOKS-0.1.md#14-trust-model-and-non-goals); see also [§14 Security considerations](spec/AGENT-HOOKS-0.1.md#14-security-considerations) and the [threat model](docs/THREAT-MODEL.md).
 
 ## Reporting a vulnerability
 

@@ -152,6 +152,7 @@ public sealed class InterceptionEmitter
         }
 
         var combined = Verdict.Allow;
+        var labels = new List<string>();
         int? decidedBy = null;
         for (var idx = 0; idx < _interceptors.Count; idx++)
         {
@@ -192,7 +193,12 @@ public sealed class InterceptionEmitter
                 combined = v;
                 decidedBy = idx;
             }
+            // §7.1 step 5: union permit-verdict labels, first-seen order.
+            foreach (var l in v.ResultLabels ?? Array.Empty<string>())
+                if (!labels.Contains(l)) labels.Add(l);
         }
+        if (labels.Count > 0)
+            combined = combined with { ResultLabels = labels };
         return (combined, decidedBy);
     }
 

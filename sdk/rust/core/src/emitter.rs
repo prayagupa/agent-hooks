@@ -177,6 +177,7 @@ impl InterceptionEmitter {
         }
 
         let mut combined = Verdict::allow();
+        let mut labels: Vec<String> = Vec::new();
         let mut decided_by: Option<u32> = None;
         for (i, interceptor) in self.interceptors.iter().enumerate() {
             let i = i as u32;
@@ -198,12 +199,28 @@ impl InterceptionEmitter {
                 if !v.decision.permits() {
                     return (v, None); // transform failed closed (host-synthesized)
                 }
+                for l in &v.result_labels {
+                    if !labels.contains(l) {
+                        labels.push(l.clone());
+                    }
+                }
                 combined = v;
                 decided_by = Some(i);
-            } else if v.decision == Decision::Warn && combined.decision == Decision::Allow {
-                combined = v;
-                decided_by = Some(i);
+            } else {
+                if v.decision == Decision::Warn && combined.decision == Decision::Allow {
+                    combined = v.clone();
+                    decided_by = Some(i);
+                }
+                // §7.1 step 5: union permit-verdict labels, first-seen order.
+                for l in &v.result_labels {
+                    if !labels.contains(l) {
+                        labels.push(l.clone());
+                    }
+                }
             }
+        }
+        if !labels.is_empty() {
+            combined.result_labels = labels;
         }
         (combined, decided_by)
     }
