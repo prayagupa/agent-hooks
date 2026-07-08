@@ -5,9 +5,7 @@ interception-point enums, `AgentContext` builder, `Verdict` types, host-side
 `InterceptionEmitter`, and the Conformance Test Kit.
 
 ```bash
-# Not yet on PyPI (the name "agent-hooks" is held by an unrelated
-# project; the distribution is named agent-hooks-sdk). Install from source:
-pip install "agent-hooks-sdk @ git+https://github.com/responsibleai/agent-hooks#subdirectory=sdk/python"
+pip install --pre agent-hooks-sdk   # import name: agent_hooks
 ```
 
 ## Host (framework adapter) usage
