@@ -6,13 +6,13 @@ version = 4
 name = "agent-hooks-python"
 version = "0.1.0-alpha.1"
 dependencies = [
- "agenthooks",
+ "agent-hooks-sdk",
  "pyo3",
  "pyo3-build-config",
 ]
 
 [[package]]
-name = "agenthooks"
+name = "agent-hooks-sdk"
 version = "0.1.0-alpha.1"
 dependencies = [
  "async-trait",

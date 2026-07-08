@@ -1,8 +1,8 @@
 [package]
 # Distribution name: "agent-hooks" is taken on crates.io by an
-# unrelated project. The lib name stays agent_hooks so `use agent_hooks`
-# is unchanged.
-name = "agenthooks"
+# unrelated project; "agent-hooks-sdk" matches the PyPI distribution.
+# The lib name stays agent_hooks so `use agent_hooks` is unchanged.
+name = "agent-hooks-sdk"
 description = "Framework-neutral agent control contract (AGENT-HOOKS-0.1). Canonical Rust core; other SDKs bind to this crate."
 keywords = ["ai-agents", "governance", "interception", "control"]
 categories = ["api-bindings"]

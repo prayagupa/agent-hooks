@@ -13,4 +13,4 @@ name = "agent_hooks_ffi"
 crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
-agenthooks = { path = "../core" }
+agent-hooks-sdk = { path = "../core" }

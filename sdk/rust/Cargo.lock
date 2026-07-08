@@ -6,11 +6,11 @@ version = 3
 name = "agent-hooks-ffi"
 version = "0.1.0-alpha.1"
 dependencies = [
- "agenthooks",
+ "agent-hooks-sdk",
 ]
 
 [[package]]
-name = "agenthooks"
+name = "agent-hooks-sdk"
 version = "0.1.0-alpha.1"
 dependencies = [
  "async-trait",

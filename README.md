@@ -78,8 +78,8 @@ in any SDK; register with the host.
 
 ```bash
 # Not yet published to package registries; the PyPI name "agent-hooks"
-# is held by an unrelated project; the distribution is named agenthooks.
-pip install "agenthooks[ctk] @ git+https://github.com/responsibleai/agent-hooks#subdirectory=sdk/python"
+# is held by an unrelated project; the distribution is named agent-hooks-sdk.
+pip install "agent-hooks-sdk[ctk] @ git+https://github.com/responsibleai/agent-hooks#subdirectory=sdk/python"
 pytest --agent-hooks-harness=your_pkg:YourHarness
 ```
 
