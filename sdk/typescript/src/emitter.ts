@@ -121,7 +121,10 @@ export class InterceptionEmitter {
     let [verdict, decidedBy] = await this.dispatch(ctx);
 
     if (verdict.decision === Decision.Escalate && this.mode === EnforcementMode.Enforce) {
-      verdict = await this.resolveEscalate(ctx, verdict, inputId);
+      // §9/NOW-14: approval binds to the escalation-time identity (post
+      // prior fold transforms), which is what the resolver actually sees.
+      const escalationId = native.contextIdentity(JSON.stringify(ctx));
+      verdict = await this.resolveEscalate(ctx, verdict, escalationId);
       // An approve MAY carry a transform (§9); it is subject to the
       // same fold rules as an interceptor transform.
       if (verdict.decision === Decision.Transform) {

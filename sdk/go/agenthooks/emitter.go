@@ -152,7 +152,17 @@ func (e *InterceptionEmitter) EmitUnchecked(ctx context.Context, actx AgentConte
 	verdict, decidedBy := e.dispatch(ctx, actx)
 
 	if verdict.Decision == Escalate && e.mode == Enforce {
-		verdict = e.resolveEscalate(ctx, actx.InterceptionPoint(), actx, verdict, inputID)
+		// §9/NOW-14: approval binds to the escalation-time identity
+		// (post prior fold transforms) — what the resolver actually sees.
+		escCtxJSON, mErr := json.Marshal(map[string]any(actx))
+		if mErr != nil {
+			return InterceptionRecord{}, mErr
+		}
+		escalationID, iErr := nativeContextIdentity(string(escCtxJSON))
+		if iErr != nil {
+			return InterceptionRecord{}, iErr
+		}
+		verdict = e.resolveEscalate(ctx, actx.InterceptionPoint(), actx, verdict, escalationID)
 		// An approve MAY carry a transform (§9); it is subject to the
 		// same fold rules as an interceptor transform.
 		if verdict.Decision == Transform {

@@ -113,7 +113,10 @@ public sealed class InterceptionEmitter
 
         if (verdict.Decision == Decision.Escalate && _mode == EnforcementMode.Enforce)
         {
-            verdict = await ResolveEscalateAsync(ctx.InterceptionPoint, ctx, verdict, inputId, ct);
+            // §9/NOW-14: approval binds to the escalation-time identity
+            // (post prior fold transforms) — what the resolver actually sees.
+            var escalationId = Native.ContextIdentity(ctx.Json.ToJsonString());
+            verdict = await ResolveEscalateAsync(ctx.InterceptionPoint, ctx, verdict, escalationId, ct);
             // An approve MAY carry a transform (§9); it is subject to the
             // same fold rules as an interceptor transform.
             if (verdict.Decision == Decision.Transform)

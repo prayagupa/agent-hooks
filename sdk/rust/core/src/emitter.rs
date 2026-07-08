@@ -137,7 +137,10 @@ impl InterceptionEmitter {
         let (mut verdict, mut decided_by) = self.dispatch(ctx).await;
 
         if verdict.decision == Decision::Escalate && self.mode == EnforcementMode::Enforce {
-            verdict = self.resolve_escalate(ctx, verdict, &input_id).await;
+            // §9/NOW-14: approval binds to the escalation-time identity
+            // (post prior fold transforms) — what the resolver actually sees.
+            let escalation_id = crate::context_identity(ctx);
+            verdict = self.resolve_escalate(ctx, verdict, &escalation_id).await;
             // An approve MAY carry a transform (§9); it is subject to the
             // same fold rules as an interceptor transform.
             if verdict.decision == Decision::Transform {
