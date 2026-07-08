@@ -136,7 +136,13 @@ impl InterceptionEmitter {
 
         let (mut verdict, mut decided_by) = self.dispatch(ctx).await;
 
-        if verdict.decision == Decision::Escalate && self.mode == EnforcementMode::Enforce {
+        // §6.1a: nothing to approve at agent_shutdown.
+        let at_shutdown = ctx.get("interception_point").and_then(serde_json::Value::as_str)
+            == Some("agent_shutdown");
+        if verdict.decision == Decision::Escalate
+            && self.mode == EnforcementMode::Enforce
+            && !at_shutdown
+        {
             // §9/NOW-14: approval binds to the escalation-time identity
             // (post prior fold transforms) — what the resolver actually sees.
             let escalation_id = crate::context_identity(ctx);

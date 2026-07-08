@@ -151,7 +151,8 @@ func (e *InterceptionEmitter) EmitUnchecked(ctx context.Context, actx AgentConte
 
 	verdict, decidedBy := e.dispatch(ctx, actx)
 
-	if verdict.Decision == Escalate && e.mode == Enforce {
+	// §6.1a: nothing to approve at agent_shutdown.
+	if verdict.Decision == Escalate && e.mode == Enforce && actx.InterceptionPoint() != AgentShutdown {
 		// §9/NOW-14: approval binds to the escalation-time identity
 		// (post prior fold transforms) — what the resolver actually sees.
 		escCtxJSON, mErr := json.Marshal(map[string]any(actx))

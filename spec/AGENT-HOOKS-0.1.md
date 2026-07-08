@@ -478,6 +478,22 @@ incorporate the result into subsequent agent state: the model response or tool
 result MUST be discarded as if it had errored, and the host MUST NOT
 re-execute the action.
 
+### 6.1a Session boundaries
+
+`agent_startup` and `agent_shutdown` have no bracketed action, so block
+verdicts there need their own rules:
+
+- A `deny` or `escalate` at `agent_startup` means the session MUST NOT
+  process any input: no `input`, model, tool, or `output` interception
+  point may be emitted afterwards. The host MUST still emit
+  `agent_shutdown` (with `summary.reason` = `error`) so the session's
+  record trail is closed.
+- At `agent_shutdown` there is nothing left to prevent. A block verdict
+  is recorded (the fail-closed audit trail is preserved) but imposes no
+  further obligation; the host MUST NOT re-execute anything and MUST
+  NOT consult the approval seam (§9) for an `escalate` returned at
+  `agent_shutdown` — there is no action to approve.
+
 ### 6.2 Block propagation
 
 When a `pre_*` interception point yields a block verdict, the host MUST NOT emit the

@@ -119,8 +119,13 @@ class InterceptionEmitter:
 
         verdict, decided_by = await self._dispatch(ctx)
 
-        if verdict.decision is Decision.ESCALATE and self._mode is EnforcementMode.ENFORCE:
-            ip = InterceptionPoint(ctx["interception_point"])
+        ip = InterceptionPoint(ctx["interception_point"])
+        if (
+            verdict.decision is Decision.ESCALATE
+            and self._mode is EnforcementMode.ENFORCE
+            # §6.1a: nothing to approve at agent_shutdown.
+            and ip is not InterceptionPoint.AGENT_SHUTDOWN
+        ):
             verdict = await self._resolve_escalate(ip, ctx, verdict, input_id)
             # An approve MAY carry a transform (§9); it is subject to the
             # same fold rules as an interceptor transform.

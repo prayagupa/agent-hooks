@@ -29,6 +29,7 @@
 
 import {
   AgentContext,
+  InterceptionPoint,
   ApprovalOutcome,
   ApprovalResolver,
   Decision,
@@ -120,7 +121,12 @@ export class InterceptionEmitter {
 
     let [verdict, decidedBy] = await this.dispatch(ctx);
 
-    if (verdict.decision === Decision.Escalate && this.mode === EnforcementMode.Enforce) {
+    if (
+      verdict.decision === Decision.Escalate &&
+      this.mode === EnforcementMode.Enforce &&
+      // §6.1a: nothing to approve at agent_shutdown.
+      ctx.interception_point !== InterceptionPoint.AgentShutdown
+    ) {
       // §9/NOW-14: approval binds to the escalation-time identity (post
       // prior fold transforms), which is what the resolver actually sees.
       const escalationId = native.contextIdentity(JSON.stringify(ctx));

@@ -111,7 +111,9 @@ public sealed class InterceptionEmitter
 
         var (verdict, decidedBy) = await DispatchAsync(ctx, ct);
 
-        if (verdict.Decision == Decision.Escalate && _mode == EnforcementMode.Enforce)
+        // §6.1a: nothing to approve at agent_shutdown.
+        if (verdict.Decision == Decision.Escalate && _mode == EnforcementMode.Enforce
+            && ctx.InterceptionPoint != InterceptionPoint.AgentShutdown)
         {
             // §9/NOW-14: approval binds to the escalation-time identity
             // (post prior fold transforms) — what the resolver actually sees.
