@@ -44,6 +44,15 @@ pub fn load_vectors(dir: impl AsRef<Path>) -> std::io::Result<Vec<Value>> {
         .collect()
 }
 
+/// A §5-invalid verdict shape (transform decision, no body) used to
+/// surface scripted faults through the infallible Rust traits.
+fn invalid_verdict() -> Verdict {
+    Verdict {
+        decision: crate::Decision::Transform,
+        ..Verdict::allow()
+    }
+}
+
 /// Replays one `interceptor_script` rule list via the CTK engine.
 struct ScriptedInterceptor {
     rules: Vec<Value>,
@@ -61,8 +70,14 @@ impl Interceptor for ScriptedInterceptor {
             rec.lock().expect("recorder poisoned").push(ctx_value.clone());
         }
         let wire = scripted_intercept(&self.rules, &ctx_value);
-        crate::verdict_from_wire(&wire)
-            .expect("malformed interceptor_script return")
+        // The Rust Interceptor trait is infallible (§7), so a scripted
+        // fault — "raise" or a §5-malformed shape — maps to the nearest
+        // analogue: a verdict that fails the emitter's §5 gate and
+        // yields host_error:verdict_invalid (fail closed either way).
+        if wire.get("__ctk_fault__").is_some() {
+            return invalid_verdict();
+        }
+        crate::verdict_from_wire(&wire).unwrap_or_else(|_| invalid_verdict())
     }
 }
 
@@ -76,6 +91,15 @@ impl ApprovalResolver for ScriptedResolver {
     async fn resolve(&self, request: ApprovalRequest<'_>) -> ApprovalResolution {
         let ctx_value = Value::Object(request.context.clone());
         let out = scripted_resolve(&self.rules, &ctx_value, &request.context_identity);
+        // Infallible resolver trait: a scripted "raise" maps to a
+        // resolution whose verdict fails the §5 gate (fail closed).
+        if out.get("__ctk_fault__").is_some() {
+            return ApprovalResolution {
+                outcome: crate::ApprovalOutcome::Approve,
+                context_identity: request.context_identity.clone(),
+                verdict: Some(invalid_verdict()),
+            };
+        }
         let outcome = match out["outcome"].as_str() {
             Some("approve") => crate::ApprovalOutcome::Approve,
             Some("reject") => crate::ApprovalOutcome::Reject,

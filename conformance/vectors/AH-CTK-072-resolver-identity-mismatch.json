@@ -1,0 +1,30 @@
+{
+  "id": "AH-CTK-072",
+  "title": "§9: resolver returns wrong context_identity → approval_action_mismatch, tool not invoked",
+  "spec_clause": "9, 11",
+  "capabilities": ["model_calls", "tool_calls"],
+  "scenario": {
+    "input": { "content": "send wire", "role": "user" },
+    "tools": [ { "name": "wire_transfer", "behavior": [ { "return": "UNREACHED" } ] } ],
+    "model_script": [
+      { "respond": { "content": null, "tool_calls": [ { "id": "tc-1", "name": "wire_transfer", "args": { "amount": 100 } } ], "finish_reason": "tool_calls" } },
+      { "respond": { "content": "could not send", "tool_calls": [], "finish_reason": "stop" } }
+    ]
+  },
+  "interceptor_script": [
+    { "at": "pre_tool_call", "return": { "decision": "escalate", "reason": "ctk:requires_approval" } }
+  ],
+  "approval_script": [
+    { "resolve": { "outcome": "approve", "verdict": { "decision": "allow" },
+                   "identity_override": "sha256:0000000000000000000000000000000000000000000000000000000000000000" } }
+  ],
+  "expect": {
+    "sequence_strict": false,
+    "interceptions": [
+      { "interception_point": "pre_tool_call" }
+    ],
+    "interceptions_absent": ["post_tool_call"],
+    "tool_not_invoked": ["wire_transfer"],
+    "run_outcome": "completed"
+  }
+}

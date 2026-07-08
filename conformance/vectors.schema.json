@@ -195,8 +195,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "at",
-        "return"
+        "at"
       ],
       "properties": {
         "at": {
@@ -209,8 +208,28 @@
         },
         "return": {
           "$ref": "https://agent-hooks.responsibleai.dev/v0.1/verdict.schema.json"
+        },
+        "fault": {
+          "type": "string",
+          "enum": [
+            "raise",
+            "malformed_verdict"
+          ],
+          "description": "Fault injection (NOW-10): 'raise' makes the scripted interceptor raise/throw natively (exercises \u00a76.3 host_error:interceptor_failed); 'malformed_verdict' returns a \u00a75-invalid shape (transform decision with no body; exercises host_error:verdict_invalid). Mutually exclusive with 'return'."
         }
-      }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "return"
+          ]
+        },
+        {
+          "required": [
+            "fault"
+          ]
+        }
+      ]
     },
     "approval_rule": {
       "type": "object",
@@ -225,9 +244,7 @@
         },
         "resolve": {
           "type": "object",
-          "required": [
-            "outcome"
-          ],
+          "required": [],
           "properties": {
             "outcome": {
               "type": "string",
@@ -239,8 +256,31 @@
             },
             "verdict": {
               "$ref": "https://agent-hooks.responsibleai.dev/v0.1/verdict.schema.json"
+            },
+            "fault": {
+              "type": "string",
+              "enum": [
+                "raise"
+              ],
+              "description": "Fault injection (NOW-10): the scripted resolver raises/throws natively (exercises \u00a76.3/\u00a79 host_error:approval_resolver_failed). Mutually exclusive with 'outcome'."
+            },
+            "identity_override": {
+              "type": "string",
+              "description": "Return this context_identity instead of the one supplied in the ApprovalRequest (exercises \u00a79 host_error:approval_action_mismatch)."
             }
-          }
+          },
+          "oneOf": [
+            {
+              "required": [
+                "outcome"
+              ]
+            },
+            {
+              "required": [
+                "fault"
+              ]
+            }
+          ]
         }
       }
     },

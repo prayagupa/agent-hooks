@@ -31,7 +31,11 @@ class ScriptedInterceptor:
         self._rules_json = json.dumps(self.rules)
 
     def intercept(self, context: AgentContext) -> dict[str, Any]:
-        return json.loads(_core.ctk_scripted_intercept(self._rules_json, json.dumps(context)))
+        w = json.loads(_core.ctk_scripted_intercept(self._rules_json, json.dumps(context)))
+        if "__ctk_fault__" in w:
+            # NOW-10 fault injection: exercise §6.3 interceptor_failed.
+            raise RuntimeError("ctk scripted fault: raise")
+        return w
 
 
 @dataclass(slots=True)
@@ -66,6 +70,9 @@ class ScriptedResolver:
                 self._rules_json, json.dumps(request.context), request.context_identity
             )
         )
+        if "__ctk_fault__" in r:
+            # NOW-10 fault injection: exercise §9 approval_resolver_failed.
+            raise RuntimeError("ctk scripted fault: raise")
         return ApprovalResolution(
             outcome=ApprovalOutcome(r["outcome"]),
             context_identity=r["context_identity"],

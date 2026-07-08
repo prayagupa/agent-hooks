@@ -87,6 +87,15 @@ pub fn scripted_intercept(rules: &[Value], ctx: &Value) -> Value {
             continue;
         }
         if matches(ctx, rule.get("match").and_then(Value::as_object)) {
+            // NOW-10 fault injection: exercise the §6.3 fail-closed paths.
+            match rule.get("fault").and_then(Value::as_str) {
+                Some("raise") => return serde_json::json!({"__ctk_fault__": "raise"}),
+                // §5-invalid shape: transform decision with no body.
+                Some("malformed_verdict") => {
+                    return serde_json::json!({"decision": "transform"})
+                }
+                _ => {}
+            }
             return rule
                 .get("return")
                 .cloned()
@@ -103,9 +112,18 @@ pub fn scripted_resolve(rules: &[Value], ctx: &Value, context_identity: &str) ->
     for rule in rules {
         if matches(ctx, rule.get("match").and_then(Value::as_object)) {
             let r = &rule["resolve"];
+            // NOW-10 fault injection.
+            if r.get("fault").and_then(Value::as_str) == Some("raise") {
+                return serde_json::json!({"__ctk_fault__": "raise"});
+            }
+            // identity_override exercises §9 approval_action_mismatch.
+            let identity = r
+                .get("identity_override")
+                .and_then(Value::as_str)
+                .unwrap_or(context_identity);
             let mut out = serde_json::json!({
                 "outcome": r["outcome"],
-                "context_identity": context_identity,
+                "context_identity": identity,
             });
             if let Some(v) = r.get("verdict") {
                 out["verdict"] = v.clone();
@@ -411,6 +429,35 @@ mod tests {
                                             "verdict": {"decision": "allow"}}})];
         let out = scripted_resolve(&rules, &json!({}), "sha256:abc");
         assert_eq!(out["context_identity"], "sha256:abc");
+        assert_eq!(out["outcome"], "approve");
+    }
+
+    #[test]
+    fn scripted_intercept_fault_sentinels() {
+        let rules = vec![
+            json!({"at": "input", "fault": "raise"}),
+            json!({"at": "output", "fault": "malformed_verdict"}),
+        ];
+        let raised = scripted_intercept(&rules, &json!({"interception_point": "input"}));
+        assert_eq!(raised["__ctk_fault__"], "raise");
+        let malformed = scripted_intercept(&rules, &json!({"interception_point": "output"}));
+        assert_eq!(malformed["decision"], "transform");
+        assert!(malformed.get("transform").is_none());
+    }
+
+    #[test]
+    fn scripted_resolve_fault_and_identity_override() {
+        let raise_rules = vec![json!({"resolve": {"fault": "raise"}})];
+        let out = scripted_resolve(&raise_rules, &json!({}), "sha256:abc");
+        assert_eq!(out["__ctk_fault__"], "raise");
+
+        let override_rules = vec![json!({"resolve": {
+            "outcome": "approve",
+            "verdict": {"decision": "allow"},
+            "identity_override": "sha256:0000"
+        }})];
+        let out = scripted_resolve(&override_rules, &json!({}), "sha256:abc");
+        assert_eq!(out["context_identity"], "sha256:0000");
         assert_eq!(out["outcome"], "approve");
     }
 

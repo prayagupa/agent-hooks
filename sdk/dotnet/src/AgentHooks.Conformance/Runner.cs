@@ -134,6 +134,11 @@ public static class Runner
         {
             var w = (JsonObject)JsonNode.Parse(
                 Native.CtkScriptedIntercept(RulesJson, ctx.Json.ToJsonString(Compact)))!;
+            if (w.ContainsKey("__ctk_fault__"))
+            {
+                // NOW-10 fault injection: exercise §6.3 interceptor_failed.
+                throw new InvalidOperationException("ctk scripted fault: raise");
+            }
             return ValueTask.FromResult(Verdict.FromWire(w));
         }
     }
@@ -159,6 +164,11 @@ public static class Runner
             var r = (JsonObject)JsonNode.Parse(
                 Native.CtkScriptedResolve(
                     rulesJson, req.Context.Json.ToJsonString(Compact), req.ContextIdentity))!;
+            if (r.ContainsKey("__ctk_fault__"))
+            {
+                // NOW-10 fault injection: exercise §9 approval_resolver_failed.
+                throw new InvalidOperationException("ctk scripted fault: raise");
+            }
             var outcome = (string)r["outcome"]! switch
             {
                 "approve" => ApprovalOutcome.Approve,

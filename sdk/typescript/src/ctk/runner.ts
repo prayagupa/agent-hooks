@@ -46,7 +46,12 @@ class ScriptedInterceptor implements Interceptor {
     this.rulesJson = JSON.stringify(rules);
   }
   intercept(ctx: AgentContext): Verdict {
-    return JSON.parse(native.ctkScriptedIntercept(this.rulesJson, JSON.stringify(ctx)));
+    const w = JSON.parse(native.ctkScriptedIntercept(this.rulesJson, JSON.stringify(ctx)));
+    if (w !== null && typeof w === "object" && "__ctk_fault__" in w) {
+      // NOW-10 fault injection: exercise §6.3 interceptor_failed.
+      throw new Error("ctk scripted fault: raise");
+    }
+    return w;
   }
 }
 
@@ -65,9 +70,14 @@ class ScriptedResolver {
     this.rulesJson = JSON.stringify(rules);
   }
   resolve(req: ApprovalRequest): ApprovalResolution {
-    return JSON.parse(
+    const r = JSON.parse(
       native.ctkScriptedResolve(this.rulesJson, JSON.stringify(req.context), req.context_identity),
     );
+    if (r !== null && typeof r === "object" && "__ctk_fault__" in r) {
+      // NOW-10 fault injection: exercise §9 approval_resolver_failed.
+      throw new Error("ctk scripted fault: raise");
+    }
+    return r;
   }
 }
 

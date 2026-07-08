@@ -6,14 +6,14 @@ version = 4
 name = "agent-hooks-node"
 version = "0.1.0-alpha.1"
 dependencies = [
- "agenthooks",
+ "agent-hooks-sdk",
  "napi",
  "napi-build",
  "napi-derive",
 ]
 
 [[package]]
-name = "agenthooks"
+name = "agent-hooks-sdk"
 version = "0.1.0-alpha.1"
 dependencies = [
  "async-trait",

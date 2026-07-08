@@ -6,7 +6,10 @@ package agenthooks
 // Exported, typed wrappers over the CTK engine cgo shims in native.go.
 // Kept in a separate non-cgo file so native.go stays a minimal cgo unit.
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"errors"
+)
 
 // CtkScriptedIntercept evaluates a vector's interceptor_script against
 // ctx via the Rust core. First matching rule wins; unmatched → allow.
@@ -20,6 +23,10 @@ func CtkScriptedIntercept(rulesJSON string, ctx AgentContext) (Verdict, error) {
 	out, err := nativeCtkScriptedIntercept(rulesJSON, string(cb))
 	if err != nil {
 		return Verdict{}, err
+	}
+	if faulted(out) {
+		// NOW-10 fault injection: exercise §6.3 interceptor_failed.
+		return Verdict{}, errors.New("ctk scripted fault: raise")
 	}
 	var v Verdict
 	return v, json.Unmarshal([]byte(out), &v)
@@ -35,6 +42,10 @@ func CtkScriptedResolve(rulesJSON string, ctx AgentContext, identity string) (Ap
 	out, err := nativeCtkScriptedResolve(rulesJSON, string(cb), identity)
 	if err != nil {
 		return ApprovalResolution{}, err
+	}
+	if faulted(out) {
+		// NOW-10 fault injection: exercise §9 approval_resolver_failed.
+		return ApprovalResolution{}, errors.New("ctk scripted fault: raise")
 	}
 	var r struct {
 		Outcome         ApprovalOutcome `json:"outcome"`
@@ -111,4 +122,15 @@ func DeepCopyContext(ctx AgentContext) (AgentContext, error) {
 		return nil, err
 	}
 	return AgentContext(out), nil
+}
+
+// faulted reports whether the CTK engine returned the NOW-10 fault
+// sentinel {"__ctk_fault__": ...}.
+func faulted(out string) bool {
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(out), &probe); err != nil {
+		return false
+	}
+	_, ok := probe["__ctk_fault__"]
+	return ok
 }
