@@ -28,6 +28,7 @@ threads is not supported.
 """
 from __future__ import annotations
 
+import asyncio
 import copy
 import inspect
 import json
@@ -50,22 +51,36 @@ from agent_hooks.context import AgentContext
 from agent_hooks.exceptions import InterceptionBlocked
 from agent_hooks.interceptor import Interceptor
 
+#: §7 RECOMMENDED interceptor/resolver timeout (seconds).
+DEFAULT_TIMEOUT: float = 5.0
+
 
 class InterceptionEmitter:
-    """Host-side helper that implements §6–§9 once so adapters don't have to."""
+    """Host-side helper that implements §6–§9 once so adapters don't have to.
 
-    __slots__ = ("_interceptors", "_mode", "_records", "_resolver")
+    ``timeout`` bounds each interceptor ``intercept()`` and resolver
+    ``resolve()`` call (§7, RECOMMENDED default 5000 ms); breach fails
+    closed with ``host_error:interceptor_timeout`` (interceptor) or
+    ``host_error:approval_resolver_failed`` (resolver). Only *awaitable*
+    returns can be preempted — a synchronous interceptor that blocks the
+    event loop cannot be interrupted (use async interceptors for
+    untrusted latency). ``timeout=None`` disables enforcement.
+    """
+
+    __slots__ = ("_interceptors", "_mode", "_records", "_resolver", "_timeout")
 
     def __init__(
         self,
         *,
         mode: EnforcementMode = EnforcementMode.ENFORCE,
         resolver: ApprovalResolver | None = None,
+        timeout: float | None = DEFAULT_TIMEOUT,
     ) -> None:
         self._interceptors: list[Interceptor] = []
         self._resolver = resolver
         self._mode = mode
         self._records: list[InterceptionRecord] = []
+        self._timeout = timeout
 
     @property
     def mode(self) -> EnforcementMode:
@@ -106,7 +121,7 @@ class InterceptionEmitter:
 
         if verdict.decision is Decision.ESCALATE and self._mode is EnforcementMode.ENFORCE:
             ip = InterceptionPoint(ctx["interception_point"])
-            verdict = self._resolve_escalate(ip, ctx, verdict, input_id)
+            verdict = await self._resolve_escalate(ip, ctx, verdict, input_id)
             # An approve MAY carry a transform (§9); it is subject to the
             # same fold rules as an interceptor transform.
             if verdict.decision is Decision.TRANSFORM:
@@ -149,10 +164,16 @@ class InterceptionEmitter:
                 # in-place mutation of the copy cannot alter enforcement.
                 raw = c.intercept(copy.deepcopy(ctx))
                 if inspect.isawaitable(raw):
-                    raw = await raw
+                    # §7 timeout: only the awaitable path is preemptible.
+                    if self._timeout is not None:
+                        raw = await asyncio.wait_for(raw, self._timeout)
+                    else:
+                        raw = await raw
                 w = raw.to_wire() if isinstance(raw, Verdict) else raw
                 _core.validate_verdict(json.dumps(w))  # §5
                 v = Verdict.from_wire(w)
+            except (TimeoutError, asyncio.TimeoutError):
+                return Verdict.host_error(HostError.INTERCEPTOR_TIMEOUT), None
             except _core.AgentHooksCoreError as e:
                 return Verdict.host_error(
                     HostError(getattr(e, "code", HostError.VERDICT_INVALID.value)), str(e)
@@ -195,13 +216,13 @@ class InterceptionEmitter:
             )
         return v
 
-    def _resolve_escalate(
+    async def _resolve_escalate(
         self, ip: InterceptionPoint, ctx: AgentContext, verdict: Verdict, identity: str
     ) -> Verdict:
         if self._resolver is None:
             return Verdict.host_error(HostError.APPROVAL_RESOLVER_MISSING)
         try:
-            res = self._resolver.resolve(
+            raw = self._resolver.resolve(
                 ApprovalRequest(
                     context_identity=identity,
                     interception_point=ip,
@@ -209,6 +230,17 @@ class InterceptionEmitter:
                     context=ctx,
                 )
             )
+            if inspect.isawaitable(raw):
+                # §7 timeout applies to the resolver too; only the
+                # awaitable path is preemptible.
+                if self._timeout is not None:
+                    res = await asyncio.wait_for(raw, self._timeout)
+                else:
+                    res = await raw
+            else:
+                res = raw
+        except (TimeoutError, asyncio.TimeoutError):
+            return Verdict.host_error(HostError.APPROVAL_RESOLVER_FAILED, "timeout")
         except Exception as e:  # noqa: BLE001
             return Verdict.host_error(HostError.APPROVAL_RESOLVER_FAILED, type(e).__name__)
         if res.context_identity != identity:

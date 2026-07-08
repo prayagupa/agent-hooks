@@ -29,7 +29,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 )
+
+// DefaultTimeout is the §7 RECOMMENDED interceptor/resolver timeout.
+const DefaultTimeout = 5000 * time.Millisecond
 
 // InterceptionEmitter implements §6–§9 once so adapters do not have to.
 // One instance per session.
@@ -38,11 +42,52 @@ type InterceptionEmitter struct {
 	resolver     ApprovalResolver
 	mode         EnforcementMode
 
+	// Timeout bounds each interceptor OnHook and resolver Resolve call
+	// (§7, RECOMMENDED default 5000 ms); breach fails closed with
+	// host_error:interceptor_timeout / approval_resolver_failed. The
+	// callee receives a cancelled context on breach, but if it ignores
+	// cancellation its goroutine keeps running detached until it
+	// returns. Set to 0 (or negative) to disable enforcement. Set
+	// before the first Emit; not synchronized.
+	Timeout time.Duration
+
 	mu sync.Mutex
 	// records holds every InterceptionRecord emitted so far, in
 	// sequence order. Guarded by mu: emissions for different tool
 	// calls may run concurrently (§12.2).
 	records []InterceptionRecord
+}
+
+// callWithTimeout runs fn under the §7 timeout d (d <= 0 disables). On
+// breach the eventual result is discarded and timedOut is true.
+func callWithTimeout[T any](
+	ctx context.Context, d time.Duration, fn func(context.Context) (T, error),
+) (out T, err error, timedOut bool) {
+	if d <= 0 {
+		out, err = fn(ctx)
+		return out, err, false
+	}
+	tctx, cancel := context.WithTimeout(ctx, d)
+	defer cancel()
+	type result struct {
+		v   T
+		err error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		v, e := fn(tctx)
+		ch <- result{v, e}
+	}()
+	select {
+	case r := <-ch:
+		return r.v, r.err, false
+	case <-tctx.Done():
+		if ctx.Err() != nil {
+			// Parent cancellation, not our timeout.
+			return out, ctx.Err(), false
+		}
+		return out, nil, true
+	}
 }
 
 // Records returns a snapshot of every InterceptionRecord emitted so far.
@@ -57,7 +102,7 @@ func (e *InterceptionEmitter) Records() []InterceptionRecord {
 // NewInterceptionEmitter constructs an emitter in the given mode with an
 // optional approval resolver.
 func NewInterceptionEmitter(mode EnforcementMode, resolver ApprovalResolver) *InterceptionEmitter {
-	return &InterceptionEmitter{mode: mode, resolver: resolver}
+	return &InterceptionEmitter{mode: mode, resolver: resolver, Timeout: DefaultTimeout}
 }
 
 // Mode returns the enforcement mode.
@@ -168,7 +213,11 @@ func (e *InterceptionEmitter) dispatch(ctx context.Context, actx AgentContext) (
 		if err != nil {
 			return HostErrorVerdict(ErrContextInvalid, err.Error()), nil
 		}
-		v, err := ic.OnHook(ctx, cp)
+		v, err, timedOut := callWithTimeout(ctx, e.Timeout,
+			func(c context.Context) (Verdict, error) { return ic.OnHook(c, cp) })
+		if timedOut {
+			return HostErrorVerdict(ErrInterceptorTimeout, ""), nil // §7
+		}
 		if err != nil {
 			return HostErrorVerdict(ErrInterceptorFailed, fmt.Sprintf("%T", err)), nil // §6.3
 		}
@@ -249,12 +298,18 @@ func (e *InterceptionEmitter) resolveEscalate(
 	if e.resolver == nil {
 		return HostErrorVerdict(ErrApprovalResolverMissing, "")
 	}
-	res, err := e.resolver.Resolve(ctx, ApprovalRequest{
-		ContextIdentity:   identity,
-		InterceptionPoint: ip,
-		Verdict:           verdict,
-		Context:           actx,
-	})
+	res, err, timedOut := callWithTimeout(ctx, e.Timeout,
+		func(c context.Context) (ApprovalResolution, error) {
+			return e.resolver.Resolve(c, ApprovalRequest{
+				ContextIdentity:   identity,
+				InterceptionPoint: ip,
+				Verdict:           verdict,
+				Context:           actx,
+			})
+		})
+	if timedOut {
+		return HostErrorVerdict(ErrApprovalResolverFailed, "timeout") // §7
+	}
 	if err != nil {
 		return HostErrorVerdict(ErrApprovalResolverFailed, fmt.Sprintf("%T", err))
 	}

@@ -28,17 +28,43 @@ public sealed class InterceptionEmitter
 {
     private static readonly JsonSerializerOptions Compact = new() { WriteIndented = false };
 
+    /// <summary>§7 RECOMMENDED interceptor/resolver timeout.</summary>
+    public static readonly TimeSpan DefaultTimeout = TimeSpan.FromMilliseconds(5000);
+
     private readonly List<IInterceptor> _interceptors = [];
     private readonly List<InterceptionRecord> _records = [];
     private readonly IApprovalResolver? _resolver;
     private readonly EnforcementMode _mode;
+    private readonly TimeSpan _timeout;
 
+    /// <param name="timeout">Bounds each interceptor
+    /// <c>InterceptAsync</c> and resolver <c>ResolveAsync</c> call (§7,
+    /// RECOMMENDED default 5000 ms); breach fails closed with
+    /// <c>host_error:interceptor_timeout</c> / <c>approval_resolver_failed</c>.
+    /// The cancellation token is signalled on breach, but a callee that
+    /// ignores it keeps running detached. <c>null</c> = 5000 ms;
+    /// <see cref="Timeout.InfiniteTimeSpan"/> disables enforcement.</param>
     public InterceptionEmitter(
         EnforcementMode mode = EnforcementMode.Enforce,
-        IApprovalResolver? resolver = null)
+        IApprovalResolver? resolver = null,
+        TimeSpan? timeout = null)
     {
         _mode = mode;
         _resolver = resolver;
+        _timeout = timeout ?? DefaultTimeout;
+    }
+
+    /// <summary>Race <paramref name="fn"/> against the §7 timeout.</summary>
+    private async ValueTask<T> WithTimeoutAsync<T>(
+        Func<CancellationToken, ValueTask<T>> fn, CancellationToken ct)
+    {
+        if (_timeout == Timeout.InfiniteTimeSpan) return await fn(ct);
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(_timeout);
+        var task = fn(cts.Token).AsTask();
+        var completed = await Task.WhenAny(task, Task.Delay(_timeout, CancellationToken.None));
+        if (completed != task) throw new TimeoutException();
+        return await task;
     }
 
     public EnforcementMode Mode => _mode;
@@ -131,8 +157,12 @@ public sealed class InterceptionEmitter
                 // §7.1/N05: each interceptor gets its own deep copy — an
                 // in-place mutation of the copy cannot alter enforcement.
                 var copy = new AgentContext((JsonObject)ctx.Json.DeepClone());
-                v = await i.InterceptAsync(copy, ct);
+                v = await WithTimeoutAsync(t => i.InterceptAsync(copy, t), ct);
                 Native.ValidateVerdict(v.ToWire().ToJsonString(Compact)); // §5
+            }
+            catch (TimeoutException)
+            {
+                return (Verdict.FromHostError(HostError.InterceptorTimeout), null);
             }
             catch (AgentHooksCoreException e)
             {
@@ -195,8 +225,13 @@ public sealed class InterceptionEmitter
         ApprovalResolution res;
         try
         {
-            res = await _resolver.ResolveAsync(
-                new ApprovalRequest(identity, ip, verdict, ctx), ct);
+            res = await WithTimeoutAsync(
+                t => _resolver.ResolveAsync(new ApprovalRequest(identity, ip, verdict, ctx), t),
+                ct);
+        }
+        catch (TimeoutException)
+        {
+            return Verdict.FromHostError(HostError.ApprovalResolverFailed, "timeout");
         }
         catch (Exception e)
         {

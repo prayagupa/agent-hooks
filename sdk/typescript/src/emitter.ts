@@ -47,14 +47,50 @@ function proceeds(r: InterceptionRecord): boolean {
   return r.mode === EnforcementMode.EvaluateOnly || permits(r.verdict.decision);
 }
 
+/** §7 RECOMMENDED interceptor/resolver timeout (milliseconds). */
+export const DEFAULT_TIMEOUT_MS = 5000;
+
+/** Internal sentinel for a §7 timeout breach. */
+class InterceptTimeout extends Error {
+  constructor() {
+    super("interceptor/resolver timeout");
+    this.name = "InterceptTimeout";
+  }
+}
+
 export class InterceptionEmitter {
   private readonly interceptors: Interceptor[] = [];
   private readonly _records: InterceptionRecord[] = [];
 
+  /**
+   * `timeoutMs` bounds each interceptor `intercept()` and resolver
+   * `resolve()` call (§7, RECOMMENDED default 5000 ms); breach fails
+   * closed with `host_error:interceptor_timeout` (interceptor) or
+   * `host_error:approval_resolver_failed` (resolver). Only async work
+   * can be preempted — a synchronous interceptor that blocks the event
+   * loop cannot be interrupted. `timeoutMs: null` disables enforcement.
+   */
   constructor(
     private readonly mode: EnforcementMode = EnforcementMode.Enforce,
     private readonly resolver: ApprovalResolver | null = null,
+    private readonly timeoutMs: number | null = DEFAULT_TIMEOUT_MS,
   ) {}
+
+  /** Race `fn`'s result against the §7 timeout. */
+  private async withTimeout<T>(fn: () => T | Promise<T>): Promise<T> {
+    if (this.timeoutMs === null) return fn();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        (async () => fn())(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new InterceptTimeout()), this.timeoutMs!);
+        }),
+      ]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  }
 
   get records(): readonly InterceptionRecord[] {
     return this._records;
@@ -129,9 +165,12 @@ export class InterceptionEmitter {
       try {
         // §7.1/N05: each interceptor gets its own deep copy — an
         // in-place mutation of the copy cannot alter enforcement.
-        v = await c.intercept(JSON.parse(JSON.stringify(ctx)));
+        v = await this.withTimeout(() => c.intercept(JSON.parse(JSON.stringify(ctx))));
         native.validateVerdict(JSON.stringify(v)); // §5
       } catch (e) {
+        if (e instanceof InterceptTimeout) {
+          return [hostErrorVerdict(HostError.InterceptorTimeout), null];
+        }
         if (e instanceof AgentHooksCoreError) {
           return [hostErrorVerdict(e.code as HostError, e.message), null];
         }
@@ -189,13 +228,18 @@ export class InterceptionEmitter {
     }
     let res;
     try {
-      res = await this.resolver.resolve({
-        context_identity: identity,
-        interception_point: ctx.interception_point,
-        verdict,
-        context: ctx,
-      });
+      res = await this.withTimeout(() =>
+        this.resolver!.resolve({
+          context_identity: identity,
+          interception_point: ctx.interception_point,
+          verdict,
+          context: ctx,
+        }),
+      );
     } catch (e) {
+      if (e instanceof InterceptTimeout) {
+        return hostErrorVerdict(HostError.ApprovalResolverFailed, "timeout");
+      }
       return hostErrorVerdict(HostError.ApprovalResolverFailed, (e as Error)?.constructor?.name ?? "Error");
     }
     if (res.context_identity !== identity) {

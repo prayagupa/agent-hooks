@@ -16,6 +16,26 @@
 //! [`InterceptionEmitter::emit`] returns `Err(InterceptionBlocked)` on
 //! any block — the ignorable-record variant is the explicitly named
 //! [`InterceptionEmitter::emit_unchecked`].
+//!
+//! # Timeouts (§7)
+//!
+//! Unlike the Python/TypeScript/.NET/Go emitters, this emitter does
+//! **not** enforce the §7 RECOMMENDED 5000 ms interceptor/resolver
+//! timeout: the crate is runtime-agnostic (no tokio/async-std
+//! dependency), and a portable future timeout requires a timer driver.
+//! Rust hosts own the timeout at the interceptor boundary — wrap each
+//! implementation with the host runtime's timeout and map the breach to
+//! the reserved reasons, e.g. under tokio:
+//!
+//! ```ignore
+//! // inside your Interceptor::intercept impl
+//! match tokio::time::timeout(Duration::from_millis(5000), inner.intercept(ctx)).await {
+//!     Ok(v) => v,
+//!     Err(_) => Verdict::host_error(HostError::InterceptorTimeout, None),
+//! }
+//! ```
+//!
+//! The wrapped verdict flows through the normal §6.3 fail-closed path.
 
 use crate::canonical::context_identity;
 use crate::enforce::{apply_transform_to_ctx, finalize, validate_transform};
