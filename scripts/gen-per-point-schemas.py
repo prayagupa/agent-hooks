@@ -14,7 +14,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 MASTER = ROOT / "spec" / "schema" / "agent-context.schema.json"
 OUT = ROOT / "spec" / "schema" / "agent-context"
 
-# interception_point -> (extra L1 required fields beyond L0, payload $defs to close)
+# interception_point -> (extra conditional required fields beyond the required core, payload $defs to close)
 L1: dict[str, tuple[list[str], list[str]]] = {
     "agent_startup": (["agent_init"], ["agent_init"]),
     "input": (["input"], ["input"]),
@@ -26,7 +26,7 @@ L1: dict[str, tuple[list[str], list[str]]] = {
     "agent_shutdown": (["summary"], ["summary"]),
 }
 
-L0_REQUIRED = ["spec", "interception_point", "timestamp", "sequence", "agent", "session", "target"]
+CORE_REQUIRED = ["spec", "interception_point", "timestamp", "sequence", "agent", "session", "target"]
 
 
 def main() -> None:
@@ -43,11 +43,11 @@ def main() -> None:
             "$schema": "https://json-schema.org/draft/2020-12/schema",
             "title": f"Agent Hooks — agent context ({hp})",
             "description": (
-                f"Closed L0+L1 schema for interception_point={hp} "
+                f"Closed required+conditional schema for interception_point={hp} "
                 f"(AGENT-HOOKS-0.1 §4.2). Used by the CTK for strict validation."
             ),
             "type": "object",
-            "required": L0_REQUIRED + extra_req,
+            "required": CORE_REQUIRED + extra_req,
             "properties": {
                 **{k: master["properties"][k] for k in master["properties"]},
                 "interception_point": {"const": hp},

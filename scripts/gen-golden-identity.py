@@ -91,7 +91,7 @@ FIXTURES: list[tuple[str, str, dict]] = [
     ),
     (
         "G-05b-l2-l3-baseline",
-        "same L0+L1 as G-05 without L2/L3; identity MUST equal G-05",
+        "same required+conditional fields as G-05 without optional/namespaced ones; identity MUST equal G-05",
         ctx("input", 1, {
             "input": {"content": "hi", "role": "user"},
             "target": {"content": "hi", "role": "user"},
