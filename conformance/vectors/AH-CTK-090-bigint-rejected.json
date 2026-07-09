@@ -1,15 +1,16 @@
 {
-  "id": "AH-CTK-072",
-  "title": "resolution violating the §9 echo rule → deny host_error:approval_identity_mismatch",
-  "spec_clause": "9, 11",
-  "part": "approval_seam",
+  "id": "AH-CTK-090",
+  "title": "jcs-sha256 provider rejects an integral beyond 2^53 fail-closed at the first emission whose preimage carries it",
+  "spec_clause": "4.4, 10.2, 11",
+  "part": "identity_provider",
   "capabilities": [
     "model_calls",
-    "tool_calls"
+    "tool_calls",
+    "int64_json"
   ],
   "scenario": {
     "input": {
-      "content": "send wire",
+      "content": "go",
       "role": "user"
     },
     "tools": [
@@ -31,7 +32,7 @@
               "id": "tc-1",
               "name": "wire_transfer",
               "args": {
-                "amount": 100
+                "id": 9007199254740993
               }
             }
           ],
@@ -51,20 +52,7 @@
     {
       "at": "pre_tool_call",
       "return": {
-        "decision": "deny",
-        "reason": "ctk:requires_approval",
-        "approval": {}
-      }
-    }
-  ],
-  "approval_script": [
-    {
-      "resolve": {
-        "outcome": "approve",
-        "verdict": {
-          "decision": "allow"
-        },
-        "identity_override": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        "decision": "allow"
       }
     }
   ],
@@ -72,24 +60,27 @@
     "sequence_strict": false,
     "interceptions": [
       {
-        "interception_point": "pre_tool_call"
+        "interception_point": "pre_model_call"
       }
     ],
     "interceptions_absent": [
-      "post_tool_call"
+      "post_model_call",
+      "pre_tool_call"
     ],
     "tool_not_invoked": [
       "wire_transfer"
     ],
     "records": [
       {
-        "interception_point": "pre_tool_call",
+        "interception_point": "post_model_call",
         "assert": {
           "verdict.decision": "deny",
-          "verdict.reason": "host_error:approval_identity_mismatch"
+          "verdict.reason": "host_error:context_invalid",
+          "input_identity": null,
+          "identity_provider": "jcs-sha256"
         }
       }
     ],
-    "run_outcome": "completed"
+    "run_outcome": "blocked"
   }
 }

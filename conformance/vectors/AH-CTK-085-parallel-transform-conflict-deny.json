@@ -1,15 +1,19 @@
 {
-  "id": "AH-CTK-072",
-  "title": "resolution violating the §9 echo rule → deny host_error:approval_identity_mismatch",
-  "spec_clause": "9, 11",
-  "part": "approval_seam",
+  "id": "AH-CTK-085",
+  "title": "parallel/strictest: two transforms against one snapshot conflict → host_error:transform_conflict",
+  "spec_clause": "7.5, 11",
+  "part": "composition/parallel_strictest",
   "capabilities": [
     "model_calls",
     "tool_calls"
   ],
+  "composition": {
+    "profile": "parallel/strictest",
+    "on_transform_conflict": "deny"
+  },
   "scenario": {
     "input": {
-      "content": "send wire",
+      "content": "go",
       "role": "user"
     },
     "tools": [
@@ -31,7 +35,7 @@
               "id": "tc-1",
               "name": "wire_transfer",
               "args": {
-                "amount": 100
+                "url": "dirty"
               }
             }
           ],
@@ -47,26 +51,31 @@
       }
     ]
   },
-  "interceptor_script": [
-    {
-      "at": "pre_tool_call",
-      "return": {
-        "decision": "deny",
-        "reason": "ctk:requires_approval",
-        "approval": {}
+  "interceptor_scripts": [
+    [
+      {
+        "at": "pre_tool_call",
+        "return": {
+          "decision": "transform",
+          "transform": {
+            "path": "$target.url",
+            "value": "a"
+          }
+        }
       }
-    }
-  ],
-  "approval_script": [
-    {
-      "resolve": {
-        "outcome": "approve",
-        "verdict": {
-          "decision": "allow"
-        },
-        "identity_override": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    ],
+    [
+      {
+        "at": "pre_tool_call",
+        "return": {
+          "decision": "transform",
+          "transform": {
+            "path": "$target.url",
+            "value": "b"
+          }
+        }
       }
-    }
+    ]
   ],
   "expect": {
     "sequence_strict": false,
@@ -74,9 +83,6 @@
       {
         "interception_point": "pre_tool_call"
       }
-    ],
-    "interceptions_absent": [
-      "post_tool_call"
     ],
     "tool_not_invoked": [
       "wire_transfer"
@@ -86,7 +92,7 @@
         "interception_point": "pre_tool_call",
         "assert": {
           "verdict.decision": "deny",
-          "verdict.reason": "host_error:approval_identity_mismatch"
+          "verdict.reason": "host_error:transform_conflict"
         }
       }
     ],

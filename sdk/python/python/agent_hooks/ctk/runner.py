@@ -32,22 +32,6 @@ from agent_hooks.ctk.scripted import (
     ScriptedResolver,
 )
 
-#: TODO(stage-4): vectors still authored in the pre-P-003 five-verdict
-#: wire vocabulary (``warn``, ``escalate``, ``approval_resolver_missing``).
-#: Stage 4 rewrites them to the three-verdict shapes (§5.1); until then
-#: they are stale and skipped here — and ONLY here. Mirrors the Rust
-#: exclusion list in ``sdk/rust/core/tests/ctk_reference.rs``.
-TODO_STAGE_4: frozenset[str] = frozenset(
-    {
-        "AH-CTK-030",  # escalate-approve → deny+approval / resolution
-        "AH-CTK-031",  # escalate-reject → deny+approval / reject
-        "AH-CTK-032",  # escalate-no-resolver → liftable deny stands (§9)
-        "AH-CTK-050",  # warn-passthrough → allow+warnings
-        "AH-CTK-072",  # resolver-identity-mismatch → echo rule via seam
-        "AH-CTK-073",  # resolver-raises → approval_resolver_failed via seam
-    }
-)
-
 
 @dataclass(slots=True)
 class VectorResult:
@@ -73,16 +57,13 @@ def _run_record_to_wire(rr: RunRecord) -> str:
             "identities": [
                 {"input_identity": i, "enforced_identity": e} for i, e in rr.identities
             ],
+            "records": rr.records,
         }
     )
 
 
 async def run_vector(harness: Harness, vector: dict[str, Any]) -> VectorResult:
     vid, title = vector["id"], vector["title"]
-    if vid in TODO_STAGE_4:
-        return VectorResult(
-            vid, title, "skip", detail="TODO(stage-4): stale pre-P-003 vector, rewritten in stage 4"
-        )
     vector_json = dumps(vector)
 
     caps_json = dumps(sorted(c.value for c in harness.capabilities))
@@ -107,8 +88,10 @@ async def run_vector(harness: Harness, vector: dict[str, Any]) -> VectorResult:
     # §13.2: composition vectors carry the profile/knobs they apply to;
     # absent means the pre-P-003 default (§7.2).
     composition = CompositionConfig.from_wire(vector.get("composition"))
+    # §10.1: absent → the default provider; explicit null → unbound.
+    identity_provider = vector.get("identity_provider", "jcs-sha256")
 
-    harness.setup(scenario, interceptors, resolver, mode, composition)
+    harness.setup(scenario, interceptors, resolver, mode, composition, identity_provider)
     try:
         rr = await harness.run()
     except Exception as e:  # noqa: BLE001

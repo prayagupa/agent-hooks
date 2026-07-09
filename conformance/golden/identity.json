@@ -193,7 +193,7 @@
     },
     {
       "id": "G-05b-l2-l3-baseline",
-      "note": "same L0+L1 as G-05 without L2/L3; identity MUST equal G-05",
+      "note": "same required+conditional fields as G-05 without optional/namespaced ones; identity MUST equal G-05",
       "ctx": {
         "spec": "agent-hooks/0.1",
         "interception_point": "input",

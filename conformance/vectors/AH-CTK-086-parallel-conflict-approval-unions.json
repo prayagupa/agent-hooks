@@ -1,15 +1,19 @@
 {
-  "id": "AH-CTK-030",
-  "title": "liftable deny at pre_tool_call: approve lifts it; approval-stop truncation is recorded",
-  "spec_clause": "5.1, 7.4, 9, 10.3",
-  "part": "approval_seam",
+  "id": "AH-CTK-086",
+  "title": "conflict with on_transform_conflict=approval: the arbitrating resolution substitutes AND carries the emission's §7.3 unions",
+  "spec_clause": "7.3, 7.5, 7.6",
+  "part": "composition/parallel_strictest",
   "capabilities": [
     "model_calls",
     "tool_calls"
   ],
+  "composition": {
+    "profile": "parallel/strictest",
+    "on_transform_conflict": "approval"
+  },
   "scenario": {
     "input": {
-      "content": "send wire",
+      "content": "go",
       "role": "user"
     },
     "tools": [
@@ -17,9 +21,7 @@
         "name": "wire_transfer",
         "behavior": [
           {
-            "return": {
-              "txn": "tx-1"
-            }
+            "return": "ok"
           }
         ]
       }
@@ -33,7 +35,7 @@
               "id": "tc-1",
               "name": "wire_transfer",
               "args": {
-                "amount": 100
+                "url": "dirty"
               }
             }
           ],
@@ -53,13 +55,12 @@
     [
       {
         "at": "pre_tool_call",
-        "match": {
-          "tool_call.name": "wire_transfer"
-        },
         "return": {
-          "decision": "deny",
-          "reason": "ctk:requires_approval",
-          "approval": {}
+          "decision": "transform",
+          "transform": {
+            "path": "$target.url",
+            "value": "a"
+          }
         }
       }
     ],
@@ -67,7 +68,27 @@
       {
         "at": "pre_tool_call",
         "return": {
-          "decision": "allow"
+          "decision": "transform",
+          "transform": {
+            "path": "$target.url",
+            "value": "b"
+          }
+        }
+      }
+    ],
+    [
+      {
+        "at": "pre_tool_call",
+        "return": {
+          "decision": "allow",
+          "warnings": [
+            {
+              "reason": "ctk:advisory"
+            }
+          ],
+          "result_labels": [
+            "ctk:label-2"
+          ]
         }
       }
     ]
@@ -77,7 +98,11 @@
       "resolve": {
         "outcome": "approve",
         "verdict": {
-          "decision": "allow"
+          "decision": "transform",
+          "transform": {
+            "path": "$target.url",
+            "value": "arbitrated"
+          }
         }
       }
     }
@@ -86,23 +111,14 @@
     "sequence_strict": false,
     "interceptions": [
       {
-        "interception_point": "pre_tool_call",
-        "context": {
-          "tool_call.name": "wire_transfer"
-        }
-      },
-      {
-        "interception_point": "post_tool_call",
-        "context": {
-          "tool_result.value.txn": "tx-1"
-        }
+        "interception_point": "pre_tool_call"
       }
     ],
     "tool_invocations": [
       {
         "name": "wire_transfer",
         "args": {
-          "amount": 100
+          "url": "arbitrated"
         }
       }
     ],
@@ -110,15 +126,14 @@
       {
         "interception_point": "pre_tool_call",
         "assert": {
-          "verdict.decision": "allow",
+          "verdict.decision": "transform",
           "resolved_by": "approval",
-          "fold_truncated": true,
-          "decided_by": 0,
-          "composition.profile": "sequential/first_deny",
-          "identity_provider": "jcs-sha256"
+          "verdict.warnings[0].reason": "ctk:advisory",
+          "verdict.result_labels[0]": "ctk:label-2"
         }
       }
     ],
-    "run_outcome": "completed"
+    "run_outcome": "completed",
+    "identities_equal": false
   }
 }

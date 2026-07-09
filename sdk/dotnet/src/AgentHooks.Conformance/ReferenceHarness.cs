@@ -11,7 +11,10 @@ public sealed class ReferenceHarness : IHarness
 {
     public string Name => "reference-agent";
     public IReadOnlySet<Capability> Capabilities { get; } =
-        new HashSet<Capability> { Capability.ModelCalls, Capability.ToolCalls };
+        new HashSet<Capability>
+        {
+            Capability.ModelCalls, Capability.ToolCalls, Capability.Int64Json,
+        };
 
     private Scenario? _scenario;
     private InterceptionEmitter? _emitter;
@@ -21,12 +24,14 @@ public sealed class ReferenceHarness : IHarness
     public void Setup(
         Scenario scenario, IReadOnlyList<IInterceptor> interceptors,
         IApprovalResolver? resolver, EnforcementMode mode,
-        CompositionConfig composition)
+        CompositionConfig composition, string? identityProvider)
     {
         _scenario = scenario;
         _toolLog.Clear();
         var em = new InterceptionEmitter(mode, resolver);
         em.SetComposition(composition);
+        em.SetIdentityProvider(identityProvider is null
+            ? IdentityProvider.Null : IdentityProvider.JcsSha256);
         foreach (var i in interceptors) em.Register(i);
         _emitter = em;
         _builder = new AgentContextBuilder(
@@ -115,7 +120,8 @@ public sealed class ReferenceHarness : IHarness
             _toolLog.Select(t => (JsonObject)t.DeepClone()).ToList(),
             Identities: em.Records
                 .Select(r => (r.InputIdentity, r.EnforcedIdentity))
-                .ToList());
+                .ToList(),
+            Records: em.Records.Select(r => r.ToWire()).ToList());
     }
 
     public void Teardown()

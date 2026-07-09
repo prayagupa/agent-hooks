@@ -35,20 +35,27 @@ class MyFrameworkHarness(Harness):
         interceptors: list[Interceptor],
         resolver: ApprovalResolver | None,
         mode: EnforcementMode,
+        composition: CompositionConfig,
+        identity_provider: str | None,
     ) -> None:
         # 1. Build a mock model from scenario.model_script
         # 2. Build mock tools from scenario.tools (record every invocation!)
         # 3. Construct your framework's agent with those mocks
-        # 4. Register `interceptor` so it receives an AgentContext at every interception point
+        # 4. Register `interceptors` (in order) so they receive an
+        #    AgentContext at every interception point
         # 5. Register `resolver` as the approval seam (if your framework
-        #    supports escalate)
-        # 6. Set enforcement mode
+        #    supports lifting deny+approval verdicts)
+        # 6. Set enforcement mode, the vector's composition profile
+        #    (§7.2), and its identity provider ("jcs-sha256" or None,
+        #    §10.1)
         ...
 
     async def run(self) -> RunRecord:
         # Execute one session with scenario.input. Catch InterceptionBlocked.
-        # Return outcome, final_output, and the tool-invocation log captured
-        # by your mock tools.
+        # Return outcome, final_output, the tool-invocation log captured by
+        # your mock tools, and — from your emitter — the per-emission
+        # identity pairs and wire-shaped InterceptionRecords (§10.3; they
+        # power expect.identities_equal and expect.records).
         ...
 
     def teardown(self) -> None:
@@ -82,6 +89,15 @@ Declare only what your framework actually does. A vector whose
 `capabilities` are not a subset of yours is **skipped**, not failed. The
 mandatory baseline is `{}` (lifecycle only: `agent_startup`, `input`,
 `output`, `agent_shutdown`).
+
+`int64_json` declares that your harness *language* can hold integers
+beyond 2^53 from vector JSON losslessly (§4.4). JavaScript harnesses
+omit it (`JSON.parse` rounds before any guard can run); Go harnesses
+need `json.Number` decoding to claim it (see `conformance/runner.go`).
+
+Non-finite floats (NaN/Infinity) and lone surrogates cannot be
+expressed in a JSON vector at all — those §4.4 marshalling guards are
+pinned by per-SDK unit tests, not vectors.
 
 ## Running
 

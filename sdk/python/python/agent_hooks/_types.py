@@ -421,6 +421,32 @@ class InterceptionRecord:
             return True
         return self.verdict.decision.permits
 
+    def to_wire(self) -> dict[str, Any]:
+        """Wire shape per ``spec/schema/interception-record.schema.json``.
+
+        Mirrors the core's serde serialization: ``verdicts`` omitted when
+        empty; ``fold_truncated``/``resolved_by`` omitted when ``None``.
+        """
+        out: dict[str, Any] = {
+            "interception_point": self.interception_point.value,
+            "mode": self.mode.value,
+            "verdict": self.verdict.to_wire(),
+            "input_identity": self.input_identity,
+            "enforced_identity": self.enforced_identity,
+            "identity_provider": self.identity_provider,
+            "session_id": self.session_id,
+            "sequence": self.sequence,
+            "decided_by": self.decided_by,
+            "composition": self.composition.to_wire(),
+        }
+        if self.verdicts:
+            out["verdicts"] = [v.to_wire() for v in self.verdicts]
+        if self.fold_truncated is not None:
+            out["fold_truncated"] = self.fold_truncated
+        if self.resolved_by is not None:
+            out["resolved_by"] = self.resolved_by
+        return out
+
     @classmethod
     def from_core(cls, obj: dict[str, Any]) -> InterceptionRecord:
         """Reconstruct from the JSON emitted by ``_core.finalize``."""

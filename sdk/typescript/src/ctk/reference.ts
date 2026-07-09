@@ -39,11 +39,13 @@ export class ReferenceHarness implements Harness {
     resolver: ApprovalResolver | null,
     mode: EnforcementMode,
     composition: CompositionConfig,
+    identityProvider: 'jcs-sha256' | null,
   ): void {
     this.scenario = scenario;
     this.toolLog = [];
     const em = new InterceptionEmitter(mode, resolver);
     em.setComposition(composition);
+    em.setIdentityProvider(identityProvider);
     for (const i of interceptors) em.register(i);
     this.emitter = em;
     this.builder = new AgentContextBuilder({
@@ -138,6 +140,7 @@ export class ReferenceHarness implements Harness {
       identities: em.records.map(
         (r) => [r.input_identity, r.enforced_identity] as [string | null, string | null],
       ),
+      records: em.records as unknown as JsonValue[],
     };
   }
 

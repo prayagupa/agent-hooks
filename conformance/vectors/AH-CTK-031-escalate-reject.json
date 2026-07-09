@@ -1,7 +1,8 @@
 {
   "id": "AH-CTK-031",
-  "title": "escalate at pre_tool_call; approval rejects \u2192 tool not invoked",
-  "spec_clause": "9, 6",
+  "title": "liftable deny at pre_tool_call: reject leaves the deny standing",
+  "spec_clause": "5.1, 9",
+  "part": "approval_seam",
   "capabilities": [
     "model_calls",
     "tool_calls"
@@ -39,7 +40,7 @@
       },
       {
         "respond": {
-          "content": "could not send",
+          "content": "sent",
           "tool_calls": [],
           "finish_reason": "stop"
         }
@@ -50,8 +51,9 @@
     {
       "at": "pre_tool_call",
       "return": {
-        "decision": "escalate",
-        "reason": "ctk:requires_approval"
+        "decision": "deny",
+        "reason": "ctk:requires_approval",
+        "approval": {}
       }
     }
   ],
@@ -78,6 +80,15 @@
     ],
     "tool_not_invoked": [
       "wire_transfer"
+    ],
+    "records": [
+      {
+        "interception_point": "pre_tool_call",
+        "assert": {
+          "verdict.decision": "deny",
+          "verdict.reason": "ctk:rejected"
+        }
+      }
     ],
     "run_outcome": "completed"
   }

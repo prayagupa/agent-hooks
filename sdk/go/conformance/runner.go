@@ -12,6 +12,7 @@ package conformance
 // RunRecord → wire-JSON marshalling. See conformance/RUNNER.md.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -39,8 +40,14 @@ func LoadVectors(dir string) ([]map[string]any, error) {
 		if err != nil {
 			return nil, err
 		}
+		// UseNumber: default decoding into any is float64, which would
+		// silently round int64_json vectors' >2^53 integers at load —
+		// the very corruption AH-CTK-090 exists to catch (§4.4).
+		// json.Number round-trips the literal losslessly.
+		dec := json.NewDecoder(bytes.NewReader(b))
+		dec.UseNumber()
 		var v map[string]any
-		if err := json.Unmarshal(b, &v); err != nil {
+		if err := dec.Decode(&v); err != nil {
 			return nil, fmt.Errorf("%s: %w", p, err)
 		}
 		out = append(out, v)
@@ -96,12 +103,19 @@ func runRecordToWire(rr RunRecord) string {
 			"enforced_identity": p.EnforcedIdentity,
 		}
 	}
+	// A nil slice marshals to JSON null, which the core's RunRecord
+	// deserializer rejects (serde default covers absent, not null).
+	records := rr.Records
+	if records == nil {
+		records = []agenthooks.InterceptionRecord{}
+	}
 	return mustJSON(map[string]any{
 		"outcome":          string(rr.Outcome),
 		"final_output":     rr.FinalOutput,
 		"tool_invocations": invs,
 		"error":            rr.Err,
 		"identities":       ids,
+		"records":          records,
 	})
 }
 
@@ -165,7 +179,13 @@ func RunVector(ctx context.Context, h Harness, vector map[string]any) (VectorRes
 		}
 	}
 
-	if err := h.Setup(scenario, interceptors, resolver, mode, composition); err != nil {
+	// §10.1: absent → the default provider; explicit null → unbound.
+	identityProvider := agenthooks.DefaultIdentityProvider()
+	if raw, present := vector["identity_provider"]; present && raw == nil {
+		identityProvider = nil
+	}
+
+	if err := h.Setup(scenario, interceptors, resolver, mode, composition, identityProvider); err != nil {
 		return VectorResult{ID: id, Title: title, Status: "fail",
 			Failures: []string{fmt.Sprintf("harness.Setup: %v", err)}}, nil
 	}

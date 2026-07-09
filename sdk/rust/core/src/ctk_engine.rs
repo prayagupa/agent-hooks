@@ -161,6 +161,12 @@ pub struct RunRecord {
     /// `expect.identities_equal` (RM-N15).
     #[serde(default)]
     pub identities: Vec<IdentityPair>,
+    /// Wire-shaped `InterceptionRecord`s (§10.3), one per emission, in
+    /// order. Enables `expect.records` assertions (composition,
+    /// verdicts, fold_truncated, resolved_by, identity_provider,
+    /// combined-verdict content).
+    #[serde(default)]
+    pub records: Vec<Value>,
 }
 
 /// Result of one vector run.
@@ -168,6 +174,9 @@ pub struct RunRecord {
 pub struct VectorResult {
     pub id: String,
     pub title: String,
+    /// Declared-surface tag (§13.1): grouping results by `part` is the
+    /// conformance report.
+    pub part: String,
     pub status: &'static str, // "pass" | "fail" | "skip"
     pub detail: String,
     pub failures: Vec<String>,
@@ -338,6 +347,49 @@ fn assert_identities(expect: &Value, rr: &RunRecord, failures: &mut Vec<String>)
     }
 }
 
+/// `expect.records`: forward-scan match on `interception_point`, then
+/// dotted-path assertions against the wire-shaped record (§10.3). A
+/// path that does not resolve is a failure — assert only fields the
+/// record is expected to carry (absent-when-None fields like
+/// `fold_truncated` are simply not asserted when absent).
+fn assert_records(expect: &Value, rr: &RunRecord, failures: &mut Vec<String>) {
+    let Some(expected) = expect.get("records").and_then(Value::as_array) else {
+        return;
+    };
+    if rr.records.is_empty() {
+        failures.push("expect.records is set but harness did not report records".into());
+        return;
+    }
+    let mut ri = 0usize;
+    for e in expected {
+        let want_ip = e.get(IP).and_then(Value::as_str).unwrap_or("");
+        while ri < rr.records.len()
+            && rr.records[ri].get(IP).and_then(Value::as_str) != Some(want_ip)
+        {
+            ri += 1;
+        }
+        if ri >= rr.records.len() {
+            failures.push(format!("expected record for {want_ip:?} not found in order"));
+            return;
+        }
+        let rec = &rr.records[ri];
+        if let Some(preds) = e.get("assert").and_then(Value::as_object) {
+            for (path, want) in preds {
+                match lookup(rec, path) {
+                    None => failures.push(format!(
+                        "record[{ri}] {want_ip}: path {path:?} did not resolve"
+                    )),
+                    Some(got) if got != want => failures.push(format!(
+                        "record[{ri}] {want_ip}: {path} == {got}, want {want}"
+                    )),
+                    _ => {}
+                }
+            }
+        }
+        ri += 1;
+    }
+}
+
 fn assert_sequence(recorded: &[Value], failures: &mut Vec<String>) {
     let seq: Vec<i64> = recorded
         .iter()
@@ -377,16 +429,23 @@ pub fn should_skip(vector: &Value, harness_caps: &[&str]) -> Option<String> {
 pub fn assert_vector(vector: &Value, recorded: &[Value], rr: &RunRecord) -> VectorResult {
     let id = vector["id"].as_str().unwrap_or("").to_owned();
     let title = vector["title"].as_str().unwrap_or("").to_owned();
+    let part = vector
+        .get("part")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
 
     let mut failures = Vec::new();
     assert_interceptions(&vector["expect"], recorded, &mut failures);
     assert_record(&vector["expect"], rr, &mut failures);
+    assert_records(&vector["expect"], rr, &mut failures);
     assert_sequence(recorded, &mut failures);
     assert_identities(&vector["expect"], rr, &mut failures);
 
     VectorResult {
         id,
         title,
+        part,
         status: if failures.is_empty() { "pass" } else { "fail" },
         detail: String::new(),
         failures,
@@ -411,14 +470,17 @@ mod tests {
         let rules = vec![
             json!({"at": "pre_tool_call", "match": {"tool_call.name": "x"},
                    "return": {"decision": "deny"}}),
-            json!({"at": "pre_tool_call", "return": {"decision": "warn"}}),
+            json!({"at": "pre_tool_call",
+                   "return": {"decision": "allow", "warnings": [{"reason": "ctk:advisory"}]}}),
         ];
         let ctx = json!({"interception_point": "pre_tool_call",
                          "tool_call": {"name": "x"}});
         assert_eq!(scripted_intercept(&rules, &ctx)["decision"], "deny");
         let ctx2 = json!({"interception_point": "pre_tool_call",
                           "tool_call": {"name": "y"}});
-        assert_eq!(scripted_intercept(&rules, &ctx2)["decision"], "warn");
+        let v2 = scripted_intercept(&rules, &ctx2);
+        assert_eq!(v2["decision"], "allow");
+        assert_eq!(v2["warnings"][0]["reason"], "ctk:advisory");
         let ctx3 = json!({"interception_point": "input"});
         assert_eq!(scripted_intercept(&rules, &ctx3)["decision"], "allow");
     }
@@ -490,6 +552,7 @@ mod tests {
             tool_invocations: vec![],
             error: None,
             identities: vec![],
+            records: vec![],
         };
         let r = assert_vector(&vector, &recorded, &rr);
         assert_eq!(r.status, "pass", "{:?}", r.failures);

@@ -26,6 +26,9 @@ const (
 	ParallelToolCalls Capability = "parallel_tool_calls"
 	Streaming         Capability = "streaming"
 	MultiTurn         Capability = "multi_turn"
+	// Int64JSON marks a harness language that can hold >2^53 integers
+	// from vector JSON losslessly (§4.4). JavaScript harnesses omit it.
+	Int64JSON Capability = "int64_json"
 )
 
 // RunOutcome describes how a harness run ended.
@@ -69,6 +72,9 @@ type RunRecord struct {
 	// Identities is one entry per interception, in order, from the
 	// harness's emitter.
 	Identities []IdentityPair
+	// Records is the wire-shaped InterceptionRecords (§10.3), one per
+	// emission, in order. Enables expect.records assertions.
+	Records []agenthooks.InterceptionRecord
 }
 
 // Harness is the single interface a framework adapter implements for the CTK.
@@ -78,13 +84,16 @@ type Harness interface {
 
 	// Setup wires the scenario's mock model + tools into the framework,
 	// registers the interceptors and resolver, and sets the enforcement
-	// mode and the vector's composition profile (§7.1).
+	// mode, the vector's composition profile (§7.1), and its identity
+	// provider (§10.1; nil = identity-unbound — vectors declare
+	// "jcs-sha256" or null, custom providers are not vector-expressible).
 	Setup(
 		scenario Scenario,
 		interceptors []agenthooks.Interceptor,
 		resolver agenthooks.ApprovalResolver,
 		mode agenthooks.EnforcementMode,
 		composition agenthooks.CompositionConfig,
+		identityProvider *agenthooks.IdentityProvider,
 	) error
 
 	Run(ctx context.Context) (RunRecord, error)

@@ -81,7 +81,12 @@ public static class Runner
             ? CompositionConfig.FromWire(co)
             : CompositionConfig.Default;
 
-        harness.Setup(scenario, interceptors, resolver, mode, composition);
+        // §10.1: absent → the default provider; explicit null → unbound.
+        var identityProvider = vector.ContainsKey("identity_provider")
+            ? (string?)vector["identity_provider"]
+            : Spec.JcsSha256;
+
+        harness.Setup(scenario, interceptors, resolver, mode, composition, identityProvider);
         RunRecord rr;
         try
         {
@@ -118,6 +123,8 @@ public static class Runner
             {
                 ["input_identity"] = i, ["enforced_identity"] = e,
             });
+        var records = new JsonArray(
+            (rr.Records ?? []).Select(r => (JsonNode)r.DeepClone()).ToArray());
         var o = new JsonObject
         {
             ["outcome"] = rr.Outcome.ToWireName(),
@@ -126,6 +133,7 @@ public static class Runner
                 rr.ToolInvocations.Select(t => (JsonNode)t.DeepClone()).ToArray()),
             ["error"] = rr.Error,
             ["identities"] = identities,
+            ["records"] = records,
         };
         return o.ToJsonString(Compact);
     }

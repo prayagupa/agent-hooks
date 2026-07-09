@@ -96,8 +96,11 @@ func CtkShouldSkip(vectorJSON string, caps []string) (string, error) {
 // CtkVectorResult is the outcome of one vector run, as returned by
 // ctk_engine::assert_vector.
 type CtkVectorResult struct {
-	ID       string   `json:"id"`
-	Title    string   `json:"title"`
+	ID    string `json:"id"`
+	Title string `json:"title"`
+	// Part is the vector's declared-surface tag (§13.1): grouping
+	// results by Part is the conformance report.
+	Part     string   `json:"part"`
 	Status   string   `json:"status"` // "pass" | "fail" | "skip"
 	Detail   string   `json:"detail"`
 	Failures []string `json:"failures"`

@@ -8,7 +8,7 @@ and is exposed through every binding as four functions:
 | `ctk_should_skip(vector, caps)` | Capability check; returns `null` or a skip-reason string |
 | `ctk_scripted_intercept(rules, ctx)` | Evaluate `interceptor_script` against a context; returns a verdict |
 | `ctk_scripted_resolve(rules, ctx, identity)` | Evaluate `approval_script`; returns `{outcome, context_identity, verdict?}` |
-| `ctk_assert(vector, recorded, run_record)` | Run all `expect` assertions; returns `{id, title, status, failures}` |
+| `ctk_assert(vector, recorded, run_record)` | Run all `expect` assertions; returns `{id, title, part, status, failures}` |
 
 A per-language runner is the ~60 lines below. Only steps 3 and 5 touch
 native code (the `Harness` protocol); everything else is a straight FFI
@@ -28,8 +28,10 @@ for each vector file in conformance/vectors/*.json:
         ctk_scripted_resolve(vector.approval_script, req.context, req.context_identity)
 
   3.  harness.setup(vector.scenario, interceptors,
-                    vector.approval_script ? resolver : null,
-                    vector.mode ?? "enforce")
+                    vector.approval_script?.length ? resolver : null,   # [] registers NO resolver
+                    vector.mode ?? "enforce",
+                    vector.composition ?? sequential/first_deny+stop,   # §7.2
+                    "identity_provider" in vector ? vector.identity_provider : "jcs-sha256")  # §10.1
 
   4.  try:  rr = harness.run()
       except e: yield {status:"fail", failures:["harness.run raised: "+e]}; continue
@@ -37,8 +39,19 @@ for each vector file in conformance/vectors/*.json:
 
   5.  yield ctk_assert(vector, recorded,
                        {outcome:rr.outcome, final_output:rr.final_output,
-                        tool_invocations:rr.tool_invocations, error:rr.error})
+                        tool_invocations:rr.tool_invocations, error:rr.error,
+                        identities:rr.identities,      # (input, enforced) per emission
+                        records:rr.records})           # wire-shaped §10.3 records
 ```
+
+## The conformance report (§13.1)
+
+Group the yielded results by each vector's `part` tag
+(`composition/parallel_strictest`, `approval_seam`,
+`identity_provider`, …) and list pass/fail/skip per part: that grouping
+**is** the conformance report a claim attaches (see
+[`CLAIMS.md`](CLAIMS.md)). Skips must show their reason (a missing
+capability such as `int64_json` is honest surface, not a failure).
 
 The `Harness` interface (native, per language) is documented in
 [`HARNESS.md`](HARNESS.md). Each SDK ships this runner under

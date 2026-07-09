@@ -14,7 +14,7 @@ use crate::ctk_engine::{
     assert_vector, scripted_intercept, scripted_resolve, should_skip, IdentityPair, RunRecord,
     VectorResult,
 };
-use crate::emitter::{InterceptionBlocked, InterceptionEmitter};
+use crate::emitter::{IdentityProvider, InterceptionBlocked, InterceptionEmitter};
 use crate::types::{
     AgentContext, ApprovalRequest, ApprovalResolution, ApprovalResolver, EnforcementMode,
     Interceptor, Verdict,
@@ -137,7 +137,9 @@ pub trait Harness: Send {
 
     /// Wire the scenario's mock model + tools into the framework,
     /// register the interceptors and resolver, set the enforcement
-    /// mode and the vector's composition profile (§7.1).
+    /// mode, the vector's composition profile (§7.1), and its identity
+    /// provider (§10.1; vectors can declare `"jcs-sha256"` or `null` —
+    /// custom providers are functions and not vector-expressible).
     fn setup(
         &mut self,
         scenario: Value,
@@ -145,6 +147,7 @@ pub trait Harness: Send {
         resolver: Option<Box<dyn ApprovalResolver>>,
         mode: EnforcementMode,
         composition: CompositionConfig,
+        identity_provider: IdentityProvider,
     );
 
     /// Execute one session; return what happened.
@@ -159,6 +162,11 @@ pub async fn run_vector(harness: &mut dyn Harness, vector: &Value) -> VectorResu
     let id = vector["id"].as_str().unwrap_or("").to_owned();
     let title = vector["title"].as_str().unwrap_or("").to_owned();
 
+    let part = vector
+        .get("part")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
     let mut caps = harness.capabilities();
     caps.sort();
     let caps_ref: Vec<&str> = caps.iter().map(String::as_str).collect();
@@ -166,6 +174,7 @@ pub async fn run_vector(harness: &mut dyn Harness, vector: &Value) -> VectorResu
         return VectorResult {
             id,
             title,
+            part,
             status: "skip",
             detail,
             failures: Vec::new(),
@@ -214,6 +223,11 @@ pub async fn run_vector(harness: &mut dyn Harness, vector: &Value) -> VectorResu
         .get("composition")
         .and_then(|c| serde_json::from_value(c.clone()).ok())
         .unwrap_or_default();
+    // §10.1: absent → the default provider; explicit null → unbound.
+    let identity_provider = match vector.get("identity_provider") {
+        Some(Value::Null) => IdentityProvider::Null,
+        _ => IdentityProvider::JcsSha256,
+    };
 
     harness.setup(
         vector["scenario"].clone(),
@@ -221,6 +235,7 @@ pub async fn run_vector(harness: &mut dyn Harness, vector: &Value) -> VectorResu
         resolver,
         mode,
         composition,
+        identity_provider,
     );
     let rr = harness.run().await;
     harness.teardown();
@@ -392,7 +407,9 @@ impl Harness for ReferenceHarness {
     }
 
     fn capabilities(&self) -> Vec<String> {
-        vec!["model_calls".into(), "tool_calls".into()]
+        // int64_json: Rust holds i64, so vectors carrying >2^53
+        // integers load losslessly (§4.4; JS harnesses omit this).
+        vec!["model_calls".into(), "tool_calls".into(), "int64_json".into()]
     }
 
     fn setup(
@@ -402,12 +419,14 @@ impl Harness for ReferenceHarness {
         resolver: Option<Box<dyn ApprovalResolver>>,
         mode: EnforcementMode,
         composition: CompositionConfig,
+        identity_provider: IdentityProvider,
     ) {
         self.scenario = scenario;
         self.tool_log.clear();
         self.session_counter += 1;
         let mut emitter = InterceptionEmitter::new(mode, resolver);
         emitter.set_composition(composition);
+        emitter.set_identity_provider(identity_provider);
         for interceptor in interceptors {
             emitter.register(interceptor);
         }
@@ -447,6 +466,11 @@ impl Harness for ReferenceHarness {
                     input_identity: r.input_identity.clone(),
                     enforced_identity: r.enforced_identity.clone(),
                 })
+                .collect(),
+            records: emitter
+                .records()
+                .iter()
+                .map(|r| serde_json::to_value(r).expect("record serializes"))
                 .collect(),
         }
     }

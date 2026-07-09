@@ -1,15 +1,19 @@
 {
-  "id": "AH-CTK-072",
-  "title": "resolution violating the §9 echo rule → deny host_error:approval_identity_mismatch",
-  "spec_clause": "9, 11",
-  "part": "approval_seam",
+  "id": "AH-CTK-088",
+  "title": "parallel/unanimous with on_disagreement=approval: arbitration permits; unions survive the substitution",
+  "spec_clause": "7.3, 7.5, 7.6",
+  "part": "composition/parallel_unanimous",
   "capabilities": [
     "model_calls",
     "tool_calls"
   ],
+  "composition": {
+    "profile": "parallel/unanimous",
+    "on_disagreement": "approval"
+  },
   "scenario": {
     "input": {
-      "content": "send wire",
+      "content": "go",
       "role": "user"
     },
     "tools": [
@@ -17,7 +21,7 @@
         "name": "wire_transfer",
         "behavior": [
           {
-            "return": "UNREACHED"
+            "return": "ok"
           }
         ]
       }
@@ -31,7 +35,7 @@
               "id": "tc-1",
               "name": "wire_transfer",
               "args": {
-                "amount": 100
+                "amount": 5
               }
             }
           ],
@@ -47,15 +51,29 @@
       }
     ]
   },
-  "interceptor_script": [
-    {
-      "at": "pre_tool_call",
-      "return": {
-        "decision": "deny",
-        "reason": "ctk:requires_approval",
-        "approval": {}
+  "interceptor_scripts": [
+    [
+      {
+        "at": "pre_tool_call",
+        "return": {
+          "decision": "allow",
+          "warnings": [
+            {
+              "reason": "ctk:note"
+            }
+          ]
+        }
       }
-    }
+    ],
+    [
+      {
+        "at": "pre_tool_call",
+        "return": {
+          "decision": "deny",
+          "reason": "ctk:disagrees"
+        }
+      }
+    ]
   ],
   "approval_script": [
     {
@@ -63,8 +81,7 @@
         "outcome": "approve",
         "verdict": {
           "decision": "allow"
-        },
-        "identity_override": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        }
       }
     }
   ],
@@ -75,18 +92,21 @@
         "interception_point": "pre_tool_call"
       }
     ],
-    "interceptions_absent": [
-      "post_tool_call"
-    ],
-    "tool_not_invoked": [
-      "wire_transfer"
+    "tool_invocations": [
+      {
+        "name": "wire_transfer",
+        "args": {
+          "amount": 5
+        }
+      }
     ],
     "records": [
       {
         "interception_point": "pre_tool_call",
         "assert": {
-          "verdict.decision": "deny",
-          "verdict.reason": "host_error:approval_identity_mismatch"
+          "verdict.decision": "allow",
+          "resolved_by": "approval",
+          "verdict.warnings[0].reason": "ctk:note"
         }
       }
     ],

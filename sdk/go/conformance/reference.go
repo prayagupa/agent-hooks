@@ -37,7 +37,9 @@ func (h *ReferenceHarness) Name() string { return "reference-agent" }
 
 // Capabilities implements Harness.
 func (h *ReferenceHarness) Capabilities() map[Capability]struct{} {
-	return map[Capability]struct{}{ModelCalls: {}, ToolCalls: {}}
+	// Int64JSON: Go holds int64, so vectors carrying >2^53 integers
+	// load losslessly (§4.4).
+	return map[Capability]struct{}{ModelCalls: {}, ToolCalls: {}, Int64JSON: {}}
 }
 
 // Setup implements Harness.
@@ -47,11 +49,13 @@ func (h *ReferenceHarness) Setup(
 	resolver agenthooks.ApprovalResolver,
 	mode agenthooks.EnforcementMode,
 	composition agenthooks.CompositionConfig,
+	identityProvider *agenthooks.IdentityProvider,
 ) error {
 	h.scenario = scenario
 	h.toolLog = nil
 	em := agenthooks.NewInterceptionEmitter(mode, resolver)
 	em.SetComposition(composition)
+	em.SetIdentityProvider(identityProvider)
 	for _, i := range interceptors {
 		em.Register(i)
 	}
@@ -175,6 +179,7 @@ func (h *ReferenceHarness) Run(ctx context.Context) (RunRecord, error) {
 		FinalOutput:     final,
 		ToolInvocations: append([]ToolInvocation(nil), h.toolLog...),
 		Identities:      ids,
+		Records:         recs,
 	}, nil
 }
 

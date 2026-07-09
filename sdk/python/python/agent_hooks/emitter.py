@@ -568,10 +568,6 @@ class InterceptionEmitter:
         elif agg["consult"]:
             consultation = await self._consult(ctx, combined)
             if consultation is not None:
-                # Whether the consulted deny was host-synthesized (§7.5
-                # transform conflict / unanimous disagreement) or an
-                # interceptor's own liftable deny.
-                synthesized_trigger = _is_host_synthesized(combined)
                 rv, permitted = consultation
                 if permitted:
                     resolved_by = "approval"
@@ -580,21 +576,21 @@ class InterceptionEmitter:
                         if rv.decision is Decision.TRANSFORM
                         else rv
                     )
-                    if synthesized_trigger:
-                        # §7.6: `decided_by` stays null for a
-                        # synthesized trigger.
-                        combined = sub
-                    elif sub.decision.permits:
-                        combined = _with_unions(sub, [*all_v, sub])
-                    else:
-                        combined = sub  # substituted transform failed closed
+                    # §7.3 step 2: the substituting resolution carries
+                    # the emission's unions — uniformly, including for a
+                    # §7.5-synthesized trigger (whose `decided_by` is
+                    # already None from the aggregation).
+                    # (falls back bare when a substituted transform
+                    # failed closed)
+                    combined = (
+                        _with_unions(sub, [*all_v, sub])
+                        if sub.decision.permits
+                        else sub
+                    )
                 else:
-                    if synthesized_trigger:
-                        combined = rv
-                    else:
-                        combined = _with_unions(rv, all_v)
-                        if _is_host_synthesized(rv):
-                            decided_by = None
+                    combined = _with_unions(rv, all_v)
+                    if _is_host_synthesized(rv):
+                        decided_by = None
         return _Outcome(combined, decided_by, verdicts, None, resolved_by)
 
     # -------------------------------------------------------------------------

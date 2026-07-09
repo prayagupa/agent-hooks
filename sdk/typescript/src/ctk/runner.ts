@@ -32,15 +32,6 @@ import type { Harness, RunRecord, Scenario } from "./index";
  * their scripted verdicts fail the §5 gate by design (fail closed) and
  * no longer exercise the seam/warning semantics they were written for,
  * so they are skipped here. */
-const TODO_STAGE_4 = [
-  "AH-CTK-030", // escalate-approve → deny+approval / resolution
-  "AH-CTK-031", // escalate-reject → deny+approval / reject
-  "AH-CTK-032", // escalate-no-resolver → liftable deny stands
-  "AH-CTK-050", // warn-passthrough → allow+warnings
-  "AH-CTK-072", // resolver-identity-mismatch → approval_identity_mismatch
-  "AH-CTK-073", // resolver-raises → approval_resolver_failed
-];
-
 export interface VectorResult {
   id: string;
   title: string;
@@ -111,22 +102,13 @@ function runRecordToWire(rr: RunRecord): string {
     tool_invocations: rr.tool_invocations,
     error: rr.error ?? null,
     identities: rr.identities.map(([i, e]) => ({ input_identity: i, enforced_identity: e })),
+    records: rr.records,
   });
 }
 
 export async function runVector(harness: Harness, vector: JsonValue): Promise<VectorResult> {
   const v = vector as Record<string, JsonValue>;
   const vectorJson = JSON.stringify(vector);
-
-  if (TODO_STAGE_4.some((id) => (v.id as string).startsWith(id))) {
-    return {
-      id: v.id as string,
-      title: v.title as string,
-      status: "skip",
-      detail: "TODO(stage-4): stale pre-P-003 vector, rewritten in stage 4",
-      failures: [],
-    };
-  }
 
   const capsJson = JSON.stringify([...harness.capabilities].sort());
   const skip = JSON.parse(native.ctkShouldSkip(vectorJson, capsJson));
@@ -151,14 +133,25 @@ export async function runVector(harness: Harness, vector: JsonValue): Promise<Ve
   for (const s of scripts.slice(1)) interceptors.push(new ScriptedInterceptor(s));
 
   const approval = v.approval_script as JsonValue[] | undefined;
-  const resolver = approval ? new ScriptedResolver(approval) : null;
+  // NB: [] is truthy in JS — an empty approval_script registers NO
+  // resolver (matches the Rust/Python runners; exercised by AH-CTK-032).
+  const resolver = approval && approval.length > 0 ? new ScriptedResolver(approval) : null;
   const mode = ((v.mode as string) ?? "enforce") as EnforcementMode;
   // §13.2: composition vectors carry the profile/knobs they apply to;
   // absent means the pre-P-003 default (`sequential/first_deny, stop`).
   const composition =
     (v.composition as unknown as CompositionConfig | undefined) ?? Composition.default();
+  // §10.1: absent → the default provider; explicit null → unbound.
+  const identityProvider = 'identity_provider' in v ? (v.identity_provider as null) : 'jcs-sha256';
 
-  harness.setup(v.scenario as unknown as Scenario, interceptors, resolver, mode, composition);
+  harness.setup(
+    v.scenario as unknown as Scenario,
+    interceptors,
+    resolver,
+    mode,
+    composition,
+    identityProvider,
+  );
   let rr: RunRecord;
   try {
     rr = await harness.run();

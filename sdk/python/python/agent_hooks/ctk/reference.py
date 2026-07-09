@@ -25,7 +25,7 @@ class ReferenceHarness:
 
     name = "reference-agent"
     capabilities: ClassVar[frozenset[Capability]] = frozenset(
-        {Capability.MODEL_CALLS, Capability.TOOL_CALLS}
+        {Capability.MODEL_CALLS, Capability.TOOL_CALLS, Capability.INT64_JSON}
     )
 
     def __init__(self) -> None:
@@ -43,10 +43,16 @@ class ReferenceHarness:
         resolver: ApprovalResolver | None,
         mode: EnforcementMode,
         composition: CompositionConfig | None = None,
+        identity_provider: str | None = "jcs-sha256",
     ) -> None:
         self._scenario = scenario
         self._tool_log = []
-        em = InterceptionEmitter(mode=mode, resolver=resolver, composition=composition)
+        em = InterceptionEmitter(
+            mode=mode,
+            resolver=resolver,
+            composition=composition,
+            identity_provider=identity_provider,
+        )
         for i in interceptors:
             em.register(i)
         self._emitter = em
@@ -115,6 +121,7 @@ class ReferenceHarness:
             identities=[
                 (r.input_identity, r.enforced_identity) for r in em.results
             ],
+            records=[r.to_wire() for r in em.results],
         )
 
     def teardown(self) -> None:

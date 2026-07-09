@@ -13,7 +13,7 @@ using System.Text.Json.Nodes;
 namespace AgentHooks.Conformance;
 
 /// <summary>Host-declared capability subset (§3.2).</summary>
-public enum Capability { ModelCalls, ToolCalls, ParallelToolCalls, Streaming, MultiTurn }
+public enum Capability { ModelCalls, ToolCalls, ParallelToolCalls, Streaming, MultiTurn, Int64Json }
 
 public static class CapabilityExtensions
 {
@@ -24,6 +24,9 @@ public static class CapabilityExtensions
         Capability.ParallelToolCalls => "parallel_tool_calls",
         Capability.Streaming => "streaming",
         Capability.MultiTurn => "multi_turn",
+        // The harness language can hold >2^53 integers from vector JSON
+        // losslessly (§4.4). JavaScript harnesses omit this.
+        Capability.Int64Json => "int64_json",
         _ => throw new ArgumentOutOfRangeException(nameof(c)),
     };
 }
@@ -101,7 +104,8 @@ public sealed record RunRecord(
     JsonNode? FinalOutput,
     IReadOnlyList<JsonObject> ToolInvocations,
     string? Error = null,
-    IReadOnlyList<(string? InputIdentity, string? EnforcedIdentity)>? Identities = null);
+    IReadOnlyList<(string? InputIdentity, string? EnforcedIdentity)>? Identities = null,
+    IReadOnlyList<JsonObject>? Records = null);
 
 /// <summary>The single interface a framework adapter implements for the CTK.</summary>
 public interface IHarness
@@ -110,14 +114,17 @@ public interface IHarness
     IReadOnlySet<Capability> Capabilities { get; }
 
     /// <summary>Wire the scenario's mock model + tools into the framework,
-    /// register the interceptors and resolver, set the enforcement mode
-    /// and the vector's composition profile (§7.1).</summary>
+    /// register the interceptors and resolver, set the enforcement mode,
+    /// the vector's composition profile (§7.1), and its identity provider
+    /// (§10.1; vectors declare "jcs-sha256" or null — custom providers
+    /// are functions and not vector-expressible).</summary>
     void Setup(
         Scenario scenario,
         IReadOnlyList<IInterceptor> interceptors,
         IApprovalResolver? resolver,
         EnforcementMode mode,
-        CompositionConfig composition);
+        CompositionConfig composition,
+        string? identityProvider);
 
     Task<RunRecord> RunAsync(CancellationToken ct = default);
 

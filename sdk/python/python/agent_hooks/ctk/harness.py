@@ -21,6 +21,9 @@ class Capability(str, Enum):
     PARALLEL_TOOL_CALLS = "parallel_tool_calls"
     STREAMING = "streaming"
     MULTI_TURN = "multi_turn"
+    #: The harness language can hold >2^53 integers from vector JSON
+    #: losslessly (§4.4). JavaScript harnesses omit this.
+    INT64_JSON = "int64_json"
 
 
 class RunOutcome(str, Enum):
@@ -108,6 +111,9 @@ class RunRecord:
     #: from the harness's emitter (``None`` when the identity provider is
     #: ``null``, §10.1). Enables ``expect.identities_equal``.
     identities: list[tuple[str | None, str | None]] = field(default_factory=list)
+    #: Wire-shaped ``InterceptionRecord`` dicts (§10.3), one per emission,
+    #: in order. Enables ``expect.records`` assertions.
+    records: list[dict[str, Any]] = field(default_factory=list)
 
 
 class Harness(Protocol):
@@ -123,6 +129,7 @@ class Harness(Protocol):
         resolver: ApprovalResolver | None,
         mode: EnforcementMode,
         composition: CompositionConfig,
+        identity_provider: str | None,
     ) -> None: ...
 
     async def run(self) -> RunRecord: ...

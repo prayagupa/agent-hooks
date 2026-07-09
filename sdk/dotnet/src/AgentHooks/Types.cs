@@ -438,6 +438,31 @@ public sealed record InterceptionRecord(
 {
     /// <summary>Whether the guarded action executes (§6, §8).</summary>
     public bool Proceeds => Mode == EnforcementMode.EvaluateOnly || Verdict.Decision.Permits();
+
+    /// <summary>Wire shape per <c>spec/schema/interception-record.schema.json</c>.
+    /// Mirrors the core's serde serialization: <c>verdicts</c> omitted when
+    /// empty; <c>fold_truncated</c>/<c>resolved_by</c> omitted when null.</summary>
+    public JsonObject ToWire()
+    {
+        var o = new JsonObject
+        {
+            ["interception_point"] = InterceptionPoint.ToWireName(),
+            ["mode"] = Mode == EnforcementMode.EvaluateOnly ? "evaluate_only" : "enforce",
+            ["verdict"] = Verdict.ToWire(),
+            ["input_identity"] = InputIdentity,
+            ["enforced_identity"] = EnforcedIdentity,
+            ["identity_provider"] = IdentityProvider,
+            ["session_id"] = SessionId,
+            ["sequence"] = Sequence,
+            ["decided_by"] = DecidedBy,
+            ["composition"] = Composition.ToWire(),
+        };
+        if (Verdicts.Count > 0)
+            o["verdicts"] = new JsonArray(Verdicts.Select(v => (JsonNode)v.ToWire()).ToArray());
+        if (FoldTruncated is not null) o["fold_truncated"] = FoldTruncated;
+        if (ResolvedBy is not null) o["resolved_by"] = ResolvedBy;
+        return o;
+    }
 }
 
 /// <summary>Interceptor protocol (§7).</summary>

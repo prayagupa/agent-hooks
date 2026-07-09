@@ -56,6 +56,9 @@ export interface RunRecord {
    * from the harness's emitter (`null` under a `null` identity
    * provider, §10.1). Enables `expect.identities_equal`. */
   identities: Array<[string | null, string | null]>;
+  /** Wire-shaped `InterceptionRecord`s (§10.3), one per emission, in
+   * order. Enables `expect.records` assertions. */
+  records: JsonValue[];
 }
 
 /** The single interface a framework adapter implements for the CTK. */
@@ -64,14 +67,17 @@ export interface Harness {
   readonly capabilities: ReadonlySet<Capability>;
 
   /** Wire the scenario's mock model + tools into the framework,
-   * register the interceptors and resolver, set the enforcement mode
-   * and the vector's composition profile (§7.1). */
+   * register the interceptors and resolver, set the enforcement mode,
+   * the vector's composition profile (§7.1), and its identity provider
+   * (§10.1; vectors declare `"jcs-sha256"` or `null` — custom providers
+   * are functions and not vector-expressible). */
   setup(
     scenario: Scenario,
     interceptors: Interceptor[],
     resolver: ApprovalResolver | null,
     mode: EnforcementMode,
     composition: CompositionConfig,
+    identityProvider: 'jcs-sha256' | null,
   ): void;
 
   run(): Promise<RunRecord>;

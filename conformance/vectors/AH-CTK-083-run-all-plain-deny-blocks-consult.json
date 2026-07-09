@@ -1,15 +1,18 @@
 {
-  "id": "AH-CTK-072",
-  "title": "resolution violating the §9 echo rule → deny host_error:approval_identity_mismatch",
-  "spec_clause": "9, 11",
-  "part": "approval_seam",
+  "id": "AH-CTK-083",
+  "title": "run_all: a single plain deny makes the set unliftable — the seam is never consulted",
+  "spec_clause": "7.4",
+  "part": "composition/sequential_run_all",
   "capabilities": [
     "model_calls",
     "tool_calls"
   ],
+  "composition": {
+    "profile": "sequential/run_all"
+  },
   "scenario": {
     "input": {
-      "content": "send wire",
+      "content": "go",
       "role": "user"
     },
     "tools": [
@@ -31,7 +34,7 @@
               "id": "tc-1",
               "name": "wire_transfer",
               "args": {
-                "amount": 100
+                "url": "dirty"
               }
             }
           ],
@@ -47,15 +50,26 @@
       }
     ]
   },
-  "interceptor_script": [
-    {
-      "at": "pre_tool_call",
-      "return": {
-        "decision": "deny",
-        "reason": "ctk:requires_approval",
-        "approval": {}
+  "interceptor_scripts": [
+    [
+      {
+        "at": "pre_tool_call",
+        "return": {
+          "decision": "deny",
+          "reason": "ctk:requires_approval",
+          "approval": {}
+        }
       }
-    }
+    ],
+    [
+      {
+        "at": "pre_tool_call",
+        "return": {
+          "decision": "deny",
+          "reason": "ctk:hard-no"
+        }
+      }
+    ]
   ],
   "approval_script": [
     {
@@ -63,8 +77,7 @@
         "outcome": "approve",
         "verdict": {
           "decision": "allow"
-        },
-        "identity_override": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        }
       }
     }
   ],
@@ -75,9 +88,6 @@
         "interception_point": "pre_tool_call"
       }
     ],
-    "interceptions_absent": [
-      "post_tool_call"
-    ],
     "tool_not_invoked": [
       "wire_transfer"
     ],
@@ -86,7 +96,8 @@
         "interception_point": "pre_tool_call",
         "assert": {
           "verdict.decision": "deny",
-          "verdict.reason": "host_error:approval_identity_mismatch"
+          "verdict.reason": "ctk:hard-no",
+          "decided_by": 1
         }
       }
     ],

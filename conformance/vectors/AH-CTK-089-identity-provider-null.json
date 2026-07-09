@@ -1,20 +1,21 @@
 {
-  "id": "AH-CTK-050",
-  "title": "allow with warnings proceeds unchanged; the warning lands on the record",
-  "spec_clause": "5.1, 6, 10.3",
-  "part": "verdict/warnings",
+  "id": "AH-CTK-089",
+  "title": "identity_provider=null: unbound records (null identities) and a null echo through the seam",
+  "spec_clause": "9, 10.1, 10.3",
+  "part": "identity_provider",
   "capabilities": [
     "model_calls",
     "tool_calls"
   ],
+  "identity_provider": null,
   "scenario": {
     "input": {
-      "content": "send wire",
+      "content": "go",
       "role": "user"
     },
     "tools": [
       {
-        "name": "http_get",
+        "name": "wire_transfer",
         "behavior": [
           {
             "return": "ok"
@@ -29,9 +30,9 @@
           "tool_calls": [
             {
               "id": "tc-1",
-              "name": "http_get",
+              "name": "wire_transfer",
               "args": {
-                "url": "https://x"
+                "amount": 9
               }
             }
           ],
@@ -40,7 +41,7 @@
       },
       {
         "respond": {
-          "content": "done",
+          "content": "sent",
           "tool_calls": [],
           "finish_reason": "stop"
         }
@@ -51,13 +52,19 @@
     {
       "at": "pre_tool_call",
       "return": {
-        "decision": "allow",
-        "warnings": [
-          {
-            "reason": "ctk:suspicious",
-            "message": "looks odd"
-          }
-        ]
+        "decision": "deny",
+        "reason": "ctk:requires_approval",
+        "approval": {}
+      }
+    }
+  ],
+  "approval_script": [
+    {
+      "resolve": {
+        "outcome": "approve",
+        "verdict": {
+          "decision": "allow"
+        }
       }
     }
   ],
@@ -65,18 +72,14 @@
     "sequence_strict": false,
     "interceptions": [
       {
-        "interception_point": "post_tool_call",
-        "context": {
-          "tool_call.args.url": "https://x",
-          "tool_result.value": "ok"
-        }
+        "interception_point": "pre_tool_call"
       }
     ],
     "tool_invocations": [
       {
-        "name": "http_get",
+        "name": "wire_transfer",
         "args": {
-          "url": "https://x"
+          "amount": 9
         }
       }
     ],
@@ -85,11 +88,13 @@
         "interception_point": "pre_tool_call",
         "assert": {
           "verdict.decision": "allow",
-          "verdict.warnings[0].reason": "ctk:suspicious"
+          "resolved_by": "approval",
+          "input_identity": null,
+          "enforced_identity": null,
+          "identity_provider": null
         }
       }
     ],
-    "run_outcome": "completed",
-    "identities_equal": true
+    "run_outcome": "completed"
   }
 }
