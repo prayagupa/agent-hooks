@@ -1,15 +1,17 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 //! Host-side emitter for Rust-native hosts: dispatch context →
-//! interceptors → verdict → record (§6–§9).
+//! interceptors → composition → combined verdict → record (§6–§10).
 //!
 //! Unlike the FFI-bound SDKs, this emitter calls the crate's primitives
 //! directly (no JSON round-trip). Semantics are identical and pinned by
-//! the same CTK vectors:
+//! the same CTK vectors.
 //!
-//! §7.1 sequential fold-through: interceptors run in registration order;
-//! each receives its own copy of the context as it stands *after* prior
-//! transforms were applied. The first block verdict short-circuits.
+//! Composition is host configuration (§7.1): the profile is set on the
+//! emitter (default `sequential/first_deny, on_approval: stop`) and
+//! recorded on every emission. "Parallel" profiles are implemented with
+//! serial dispatch over isolated snapshots — §7.2: parallel names
+//! isolation semantics, not scheduling.
 //!
 //! Fail-closed defaults: an `enforce`-mode emission with zero registered
 //! interceptors yields `deny host_error:no_interceptor` (§7), and
@@ -37,17 +39,22 @@
 //!
 //! The wrapped verdict flows through the normal §6.3 fail-closed path.
 
-use crate::canonical::context_identity;
-use crate::enforce::{apply_transform_to_ctx, finalize, validate_transform};
+use crate::canonical;
+use crate::composition::{
+    aggregate_strictest, all_denies_liftable, is_unanimous_allow, summaries, with_unions,
+    Aggregate, CompositionConfig, CompositionProfile, OnApproval, SynthesisPolicy,
+};
+use crate::enforce::{apply_transform_to_ctx, finalize, validate_transform, FinalizeMeta};
 use crate::types::{
     AgentContext, ApprovalOutcome, ApprovalRequest, ApprovalResolver, Decision, EnforcementMode,
-    HostError, Interceptor, InterceptionPoint, InterceptionRecord, Verdict,
+    HostError, InterceptionPoint, InterceptionRecord, Interceptor, Verdict, VerdictSummary,
+    JCS_SHA256,
 };
 use serde_json::Value;
 use std::fmt;
 
-/// Returned by [`InterceptionEmitter::emit`] when a verdict blocks the
-/// guarded action (§6).
+/// Returned by [`InterceptionEmitter::emit`] when the combined verdict
+/// blocks the guarded action (§6).
 #[derive(Debug, Clone)]
 pub struct InterceptionBlocked {
     pub record: InterceptionRecord,
@@ -67,6 +74,42 @@ impl fmt::Display for InterceptionBlocked {
 
 impl std::error::Error for InterceptionBlocked {}
 
+/// The host-declared identity provider (§10.1).
+pub enum IdentityProvider {
+    /// The shipped default (§10.2): JCS + SHA-256 over the closed
+    /// required+conditional projection; fail-closed I-JSON domain.
+    JcsSha256,
+    /// Identity-unbound: approvals bind by correlation only; records
+    /// carry `null` identities and self-describe as unbound.
+    Null,
+    /// A host-supplied pure function. The echo and record rules (§10.1)
+    /// still apply; the golden vectors do not.
+    Custom {
+        name: String,
+        f: Box<dyn Fn(&AgentContext) -> String + Send + Sync>,
+    },
+}
+
+impl IdentityProvider {
+    fn name(&self) -> Option<String> {
+        match self {
+            Self::JcsSha256 => Some(JCS_SHA256.to_owned()),
+            Self::Null => None,
+            Self::Custom { name, .. } => Some(name.clone()),
+        }
+    }
+
+    /// `Ok(None)` iff the provider is `Null`; `Err` iff the default
+    /// provider rejected the value domain (§10.2).
+    fn compute(&self, ctx: &AgentContext) -> Result<Option<String>, (HostError, String)> {
+        match self {
+            Self::JcsSha256 => canonical::context_identity(ctx).map(Some),
+            Self::Null => Ok(None),
+            Self::Custom { f, .. } => Ok(Some(f(ctx))),
+        }
+    }
+}
+
 /// Whether a verdict was synthesized by the host (§11) rather than
 /// returned by an interceptor or resolver.
 fn is_host_synthesized(v: &Verdict) -> bool {
@@ -75,12 +118,49 @@ fn is_host_synthesized(v: &Verdict) -> bool {
         .is_some_and(|r| r.starts_with("host_error:"))
 }
 
-/// Host-side helper that implements §6–§9 once so adapters don't have
+/// Internal result of one profile dispatch.
+struct DispatchOutcome {
+    combined: Verdict,
+    decided_by: Option<u32>,
+    verdicts: Vec<VerdictSummary>,
+    fold_truncated: Option<bool>,
+    resolved_by: Option<&'static str>,
+}
+
+impl DispatchOutcome {
+    fn synthesized(err: HostError, detail: Option<String>) -> Self {
+        Self {
+            combined: Verdict::host_error(err, detail),
+            decided_by: None,
+            verdicts: Vec::new(),
+            fold_truncated: None,
+            resolved_by: None,
+        }
+    }
+}
+
+/// What a seam consultation produced (§7.6, §9).
+enum Consultation {
+    /// Seam not consulted: no resolver, `evaluate_only`, or
+    /// `agent_shutdown`. The liftable deny stands as-is.
+    NotConsulted,
+    /// A resolution (or a host-synthesized failure verdict) that
+    /// substitutes for the triggering verdict. `permitted` is true for
+    /// an `approve` outcome carrying a permit verdict.
+    Substituted {
+        verdict: Box<Verdict>,
+        permitted: bool,
+    },
+}
+
+/// Host-side helper that implements §6–§10 once so adapters don't have
 /// to. One instance per session.
 pub struct InterceptionEmitter {
     interceptors: Vec<Box<dyn Interceptor>>,
     resolver: Option<Box<dyn ApprovalResolver>>,
     mode: EnforcementMode,
+    composition: CompositionConfig,
+    identity: IdentityProvider,
     records: Vec<InterceptionRecord>,
 }
 
@@ -90,12 +170,26 @@ impl InterceptionEmitter {
             interceptors: Vec::new(),
             resolver,
             mode,
+            composition: CompositionConfig::default(),
+            identity: IdentityProvider::JcsSha256,
             records: Vec::new(),
         }
     }
 
     pub fn mode(&self) -> EnforcementMode {
         self.mode
+    }
+
+    /// Declare the composition profile for subsequent emissions (§7.1).
+    pub fn set_composition(&mut self, composition: CompositionConfig) -> &mut Self {
+        self.composition = composition;
+        self
+    }
+
+    /// Declare the identity provider (§10.1).
+    pub fn set_identity_provider(&mut self, provider: IdentityProvider) -> &mut Self {
+        self.identity = provider;
+        self
     }
 
     /// All interception records emitted so far in this session, in order.
@@ -110,7 +204,7 @@ impl InterceptionEmitter {
 
     // -------------------------------------------------------------------------
 
-    /// Run the interception and return `Err(InterceptionBlocked)` if the
+    /// Run the emission and return `Err(InterceptionBlocked)` if the
     /// guarded action must not proceed (§6). Primary entry point; the
     /// safe path is the default.
     pub async fn emit(
@@ -125,107 +219,463 @@ impl InterceptionEmitter {
         }
     }
 
-    /// Run the interception and return the record without a block error.
+    /// Run the emission and return the record without a block error.
     /// The caller MUST inspect [`InterceptionRecord::proceeds`] and halt
     /// the guarded action itself; prefer [`Self::emit`].
     pub async fn emit_unchecked(&mut self, ctx: &mut AgentContext) -> InterceptionRecord {
-        // §10.2: input identity binds to the context BEFORE dispatch, so
+        // §10.3: input identity binds to the context BEFORE dispatch, so
         // neither interceptor mutation nor fold-through can retroactively
         // alter what the record claims was evaluated.
-        let input_id = context_identity(ctx);
+        let (input_identity, outcome) = match self.identity.compute(ctx) {
+            Ok(id) => (id, None),
+            // §10.2: the default provider rejected the value domain.
+            // Fail closed before any interceptor runs.
+            Err((e, detail)) => (
+                None,
+                Some(DispatchOutcome::synthesized(e, Some(detail))),
+            ),
+        };
+        let outcome = match outcome {
+            Some(o) => o,
+            None => self.dispatch(ctx).await,
+        };
 
-        let (mut verdict, mut decided_by) = self.dispatch(ctx).await;
-
-        // §6.1a: nothing to approve at agent_shutdown.
-        let at_shutdown = ctx.get("interception_point").and_then(serde_json::Value::as_str)
-            == Some("agent_shutdown");
-        if verdict.decision == Decision::Escalate
-            && self.mode == EnforcementMode::Enforce
-            && !at_shutdown
-        {
-            // §9/NOW-14: approval binds to the escalation-time identity
-            // (post prior fold transforms) — what the resolver actually sees.
-            let escalation_id = crate::context_identity(ctx);
-            verdict = self.resolve_escalate(ctx, verdict, &escalation_id).await;
-            // An approve MAY carry a transform (§9); it is subject to the
-            // same fold rules as an interceptor transform.
-            if verdict.decision == Decision::Transform {
-                verdict = self.fold_transform(ctx, verdict);
-            }
-            // A resolver-substituted verdict keeps the escalating
-            // interceptor's index; host-synthesized failures do not.
-            if is_host_synthesized(&verdict) {
-                decided_by = None;
-            }
-        }
-
-        let record = finalize(ctx, verdict, self.mode, &input_id, decided_by);
+        let meta = FinalizeMeta {
+            input_identity,
+            identity_provider: self.identity.name(),
+            enforced_identity: match &self.identity {
+                IdentityProvider::Custom { f, .. } => Some(f(ctx)),
+                _ => None, // finalize computes (default) or leaves null
+            },
+            decided_by: outcome.decided_by,
+            composition: self.composition,
+            verdicts: outcome.verdicts,
+            fold_truncated: outcome.fold_truncated,
+            resolved_by: outcome.resolved_by,
+        };
+        let record = finalize(ctx, outcome.combined, self.mode, meta);
         self.records.push(record.clone());
         record
     }
 
     // -------------------------------------------------------------------------
 
-    /// §7 dispatch with §7.1 sequential fold-through. Returns the
-    /// combined verdict and the registration index of the deciding
-    /// interceptor (`None` for pure allow or host-synthesized).
-    async fn dispatch(&self, ctx: &mut AgentContext) -> (Verdict, Option<u32>) {
+    /// Profile dispatch (§7.4–§7.5). Returns the combined verdict and
+    /// its record metadata.
+    async fn dispatch(&self, ctx: &mut AgentContext) -> DispatchOutcome {
         if self.interceptors.is_empty() {
-            // §7: zero interceptors fails closed. Register an explicit
-            // allow-all interceptor for a deliberate passthrough.
-            return (Verdict::host_error(HostError::NoInterceptor, None), None);
+            // §7: zero interceptors fails closed, profile-independent.
+            // Register an explicit allow-all interceptor for a
+            // deliberate passthrough.
+            return DispatchOutcome::synthesized(HostError::NoInterceptor, None);
         }
-
-        let mut combined = Verdict::allow();
-        let mut labels: Vec<String> = Vec::new();
-        let mut decided_by: Option<u32> = None;
-        for (i, interceptor) in self.interceptors.iter().enumerate() {
-            let i = i as u32;
-            // §7.1/N05: each interceptor gets its own copy — in-place
-            // mutation of the copy cannot alter enforcement.
-            let copy = ctx.clone();
-            let v = interceptor.intercept(&copy).await;
-            if v.validate().is_err() {
-                // §5 gate; the interceptor trait is infallible so the
-                // only failure mode is a malformed verdict shape.
-                return (Verdict::host_error(HostError::VerdictInvalid, None), None);
-            }
-
-            if !v.decision.permits() {
-                return (v, Some(i)); // first block short-circuits (§7.1)
-            }
-            if v.decision == Decision::Transform {
-                let v = self.fold_transform(ctx, v);
-                if !v.decision.permits() {
-                    return (v, None); // transform failed closed (host-synthesized)
-                }
-                for l in &v.result_labels {
-                    if !labels.contains(l) {
-                        labels.push(l.clone());
-                    }
-                }
-                combined = v;
-                decided_by = Some(i);
-            } else {
-                if v.decision == Decision::Warn && combined.decision == Decision::Allow {
-                    combined = v.clone();
-                    decided_by = Some(i);
-                }
-                // §7.1 step 5: union permit-verdict labels, first-seen order.
-                for l in &v.result_labels {
-                    if !labels.contains(l) {
-                        labels.push(l.clone());
-                    }
-                }
+        match self.composition.profile {
+            CompositionProfile::SequentialFirstDeny => self.dispatch_first_deny(ctx).await,
+            CompositionProfile::SequentialRunAll => self.dispatch_run_all(ctx).await,
+            CompositionProfile::ParallelStrictest | CompositionProfile::ParallelUnanimous => {
+                self.dispatch_parallel(ctx).await
             }
         }
-        if !labels.is_empty() {
-            combined.result_labels = labels;
-        }
-        (combined, decided_by)
     }
 
-    /// Apply (enforce) or validate (evaluate_only) one transform (§7.1, §8).
+    /// `sequential/first_deny` (§7.4): fold-through, first deny
+    /// short-circuits; a liftable deny consults the seam, then `stop`
+    /// or `resume` per the knob.
+    ///
+    /// `per_interceptor` stays index-aligned with registration order
+    /// (one entry per invoked interceptor, §10.3 summaries); `pool`
+    /// additionally holds substituted resolutions for the §7.3 unions.
+    async fn dispatch_first_deny(&self, ctx: &mut AgentContext) -> DispatchOutcome {
+        let n = self.interceptors.len();
+        let on_approval = self.composition.on_approval.unwrap_or(OnApproval::Stop);
+        let mut per_interceptor: Vec<Verdict> = Vec::new();
+        let mut pool: Vec<Verdict> = Vec::new();
+        let mut last_transform: Option<(u32, Verdict)> = None;
+        let mut resolved_by: Option<&'static str> = None;
+        let truncated = |i: usize| Some(i + 1 < n);
+
+        for (i, interceptor) in self.interceptors.iter().enumerate() {
+            let idx = i as u32;
+            // §7: each interceptor gets its own copy — in-place mutation
+            // of the copy cannot alter enforcement.
+            let v = interceptor.intercept(&ctx.clone()).await;
+            let v = if v.validate().is_err() {
+                Verdict::host_error(HostError::VerdictInvalid, None)
+            } else {
+                v
+            };
+            per_interceptor.push(v.clone());
+            pool.push(v.clone());
+            if is_host_synthesized(&v) {
+                // §6.3: malformed verdict fails closed and — in this
+                // profile — short-circuits like any deny.
+                return DispatchOutcome {
+                    combined: with_unions(v, &pool),
+                    decided_by: None,
+                    verdicts: summaries(&per_interceptor),
+                    fold_truncated: truncated(i),
+                    resolved_by,
+                };
+            }
+
+            match v.decision {
+                Decision::Deny => {
+                    match self.consult(ctx, &v).await {
+                        Consultation::NotConsulted => {
+                            return DispatchOutcome {
+                                combined: with_unions(v, &pool),
+                                decided_by: Some(idx),
+                                verdicts: summaries(&per_interceptor),
+                                fold_truncated: truncated(i),
+                                resolved_by,
+                            }
+                        }
+                        Consultation::Substituted { verdict, permitted } => {
+                            let verdict = *verdict;
+                            if !permitted {
+                                // Reject / unresolved / echo violation:
+                                // a deny stands (§9).
+                                let synthesized = is_host_synthesized(&verdict);
+                                return DispatchOutcome {
+                                    combined: with_unions(verdict, &pool),
+                                    decided_by: if synthesized { None } else { Some(idx) },
+                                    verdicts: summaries(&per_interceptor),
+                                    fold_truncated: truncated(i),
+                                    resolved_by,
+                                };
+                            }
+                            resolved_by = Some("approval");
+                            // §7.6: the permit resolution substitutes at
+                            // this position; its transform folds like an
+                            // interceptor's (§7.4).
+                            let sub = if verdict.decision == Decision::Transform {
+                                self.fold_transform(ctx, verdict)
+                            } else {
+                                verdict
+                            };
+                            if !sub.decision.permits() {
+                                return DispatchOutcome {
+                                    combined: sub,
+                                    decided_by: None,
+                                    verdicts: summaries(&per_interceptor),
+                                    fold_truncated: truncated(i),
+                                    resolved_by,
+                                };
+                            }
+                            pool.push(sub.clone());
+                            match on_approval {
+                                OnApproval::Stop => {
+                                    // §7.4 stop: the resolution is the
+                                    // combined verdict; the emission
+                                    // ends. fold_truncated makes the
+                                    // skip legible.
+                                    return DispatchOutcome {
+                                        combined: with_unions(sub, &pool),
+                                        decided_by: Some(idx),
+                                        verdicts: summaries(&per_interceptor),
+                                        fold_truncated: truncated(i),
+                                        resolved_by,
+                                    };
+                                }
+                                OnApproval::Resume => {
+                                    if sub.decision == Decision::Transform {
+                                        last_transform = Some((idx, sub));
+                                    }
+                                    // fold continues at i+1
+                                }
+                            }
+                        }
+                    }
+                }
+                Decision::Transform => {
+                    let v = self.fold_transform(ctx, v);
+                    if !v.decision.permits() {
+                        // Transform failed closed (host-synthesized §5.2).
+                        return DispatchOutcome {
+                            combined: v,
+                            decided_by: None,
+                            verdicts: summaries(&per_interceptor),
+                            fold_truncated: truncated(i),
+                            resolved_by,
+                        };
+                    }
+                    last_transform = Some((idx, v));
+                }
+                Decision::Allow => {}
+            }
+        }
+
+        // No standing deny: combined is the last transform, else allow.
+        let (combined, decided_by) = match last_transform {
+            Some((idx, v)) => (v, Some(idx)),
+            None => (Verdict::allow(), None),
+        };
+        DispatchOutcome {
+            combined: with_unions(combined, &pool),
+            decided_by,
+            verdicts: summaries(&per_interceptor),
+            fold_truncated: Some(false),
+            resolved_by,
+        }
+    }
+
+    /// `sequential/run_all` (§7.4): everything runs, transforms fold
+    /// through for visibility, severity-max aggregate; the seam is
+    /// consulted at most once, only when the winner is liftable.
+    async fn dispatch_run_all(&self, ctx: &mut AgentContext) -> DispatchOutcome {
+        let mut all: Vec<Verdict> = Vec::new();
+        for interceptor in self.interceptors.iter() {
+            let v = interceptor.intercept(&ctx.clone()).await;
+            // §6.3 per-interceptor: a malformed verdict becomes that
+            // interceptor's synthesized deny; the rest still run.
+            let v = if v.validate().is_err() {
+                Verdict::host_error(HostError::VerdictInvalid, None)
+            } else {
+                v
+            };
+            if v.decision == Decision::Transform {
+                let folded = self.fold_transform(ctx, v);
+                if !folded.decision.permits() {
+                    // §7.4: a transform that fails to apply
+                    // short-circuits in both sequential profiles.
+                    all.push(folded.clone());
+                    return DispatchOutcome {
+                        combined: folded,
+                        decided_by: None,
+                        verdicts: summaries(&all),
+                        fold_truncated: None,
+                        resolved_by: None,
+                    };
+                }
+                all.push(folded);
+            } else {
+                all.push(v);
+            }
+        }
+        self.aggregate_and_consult(ctx, all, true, None).await
+    }
+
+    /// Parallel profiles (§7.5): isolated snapshots, no fold; serial
+    /// dispatch (isolation semantics, not scheduling).
+    async fn dispatch_parallel(&self, ctx: &mut AgentContext) -> DispatchOutcome {
+        let snapshot = ctx.clone();
+        let mut all: Vec<Verdict> = Vec::new();
+        for interceptor in self.interceptors.iter() {
+            let v = interceptor.intercept(&snapshot.clone()).await;
+            all.push(if v.validate().is_err() {
+                Verdict::host_error(HostError::VerdictInvalid, None)
+            } else {
+                v
+            });
+        }
+
+        if self.composition.profile == CompositionProfile::ParallelUnanimous {
+            return self.aggregate_unanimous(ctx, all).await;
+        }
+        self.aggregate_and_consult(ctx, all, false, None).await
+    }
+
+    /// Severity-max aggregation + winner handling, shared by `run_all`
+    /// (`sequential == true`) and `parallel/strictest`.
+    async fn aggregate_and_consult(
+        &self,
+        ctx: &mut AgentContext,
+        all: Vec<Verdict>,
+        sequential: bool,
+        resolved_by: Option<&'static str>,
+    ) -> DispatchOutcome {
+        let verdicts = summaries(&all);
+        let mut resolved_by = resolved_by;
+        match aggregate_strictest(&all, sequential) {
+            Aggregate::TransformConflict(idxs) => {
+                // §7.5: transforms against the same snapshot do not
+                // compose.
+                let detail = format!("conflicting transforms from interceptors {idxs:?}");
+                let policy = self
+                    .composition
+                    .on_transform_conflict
+                    .unwrap_or(SynthesisPolicy::Deny);
+                let combined = self
+                    .synthesize_and_maybe_consult(
+                        ctx,
+                        HostError::TransformConflict,
+                        detail,
+                        policy,
+                        &mut resolved_by,
+                    )
+                    .await;
+                DispatchOutcome {
+                    combined,
+                    decided_by: None,
+                    verdicts,
+                    fold_truncated: None,
+                    resolved_by,
+                }
+            }
+            Aggregate::Winner(i) => {
+                let idx = i as u32;
+                let winner = all[i].clone();
+                match winner.decision {
+                    Decision::Deny => {
+                        // A liftable winner implies no plain deny exists
+                        // (severity), so the §7.4 "every deny is
+                        // liftable" consult precondition holds.
+                        debug_assert!(
+                            !winner.is_liftable() || all_denies_liftable(&all)
+                        );
+                        match self.consult(ctx, &winner).await {
+                            Consultation::NotConsulted => DispatchOutcome {
+                                combined: with_unions(winner, &all),
+                                decided_by: Some(idx),
+                                verdicts,
+                                fold_truncated: None,
+                                resolved_by,
+                            },
+                            Consultation::Substituted { verdict, permitted } => {
+                                let verdict = *verdict;
+                                let synthesized = is_host_synthesized(&verdict);
+                                let combined = if permitted {
+                                    resolved_by = Some("approval");
+                                    let sub = if verdict.decision == Decision::Transform {
+                                        self.fold_transform(ctx, verdict)
+                                    } else {
+                                        verdict
+                                    };
+                                    if sub.decision.permits() {
+                                        let mut pool = all.clone();
+                                        pool.push(sub.clone());
+                                        with_unions(sub, &pool)
+                                    } else {
+                                        sub
+                                    }
+                                } else {
+                                    with_unions(verdict, &all)
+                                };
+                                DispatchOutcome {
+                                    decided_by: if synthesized && !permitted {
+                                        None
+                                    } else {
+                                        Some(idx)
+                                    },
+                                    combined,
+                                    verdicts,
+                                    fold_truncated: None,
+                                    resolved_by,
+                                }
+                            }
+                        }
+                    }
+                    Decision::Transform => {
+                        // Sequential: already folded during dispatch.
+                        // Parallel: apply the single winning transform now.
+                        let winner = if sequential {
+                            winner
+                        } else {
+                            let folded = self.fold_transform(ctx, winner);
+                            if !folded.decision.permits() {
+                                return DispatchOutcome {
+                                    combined: folded,
+                                    decided_by: None,
+                                    verdicts,
+                                    fold_truncated: None,
+                                    resolved_by,
+                                };
+                            }
+                            folded
+                        };
+                        DispatchOutcome {
+                            combined: with_unions(winner, &all),
+                            decided_by: Some(idx),
+                            verdicts,
+                            fold_truncated: None,
+                            resolved_by,
+                        }
+                    }
+                    Decision::Allow => DispatchOutcome {
+                        combined: with_unions(Verdict::allow(), &all),
+                        decided_by: None,
+                        verdicts,
+                        fold_truncated: None,
+                        resolved_by,
+                    },
+                }
+            }
+        }
+    }
+
+    /// `parallel/unanimous` (§7.5): anything but unanimous allow is a
+    /// disagreement.
+    async fn aggregate_unanimous(
+        &self,
+        ctx: &mut AgentContext,
+        all: Vec<Verdict>,
+    ) -> DispatchOutcome {
+        let verdicts = summaries(&all);
+        if is_unanimous_allow(&all) {
+            return DispatchOutcome {
+                combined: with_unions(Verdict::allow(), &all),
+                decided_by: None,
+                verdicts,
+                fold_truncated: None,
+                resolved_by: None,
+            };
+        }
+        let mut resolved_by: Option<&'static str> = None;
+        let policy = self
+            .composition
+            .on_disagreement
+            .unwrap_or(SynthesisPolicy::Deny);
+        let combined = self
+            .synthesize_and_maybe_consult(
+                ctx,
+                HostError::CompositionDisagreement,
+                "non-unanimous outcome under parallel/unanimous".into(),
+                policy,
+                &mut resolved_by,
+            )
+            .await;
+        DispatchOutcome {
+            combined,
+            decided_by: None,
+            verdicts,
+            fold_truncated: None,
+            resolved_by,
+        }
+    }
+
+    /// §7.5 `"deny" | "approval"` synthesis: a plain deny, or a liftable
+    /// one consulted through the seam (the resolver — typically a human
+    /// — may resolve with an allow, a transform, or a reject).
+    async fn synthesize_and_maybe_consult(
+        &self,
+        ctx: &mut AgentContext,
+        err: HostError,
+        detail: String,
+        policy: SynthesisPolicy,
+        resolved_by: &mut Option<&'static str>,
+    ) -> Verdict {
+        match policy {
+            SynthesisPolicy::Deny => Verdict::host_error(err, Some(detail)),
+            SynthesisPolicy::Approval => {
+                let liftable = Verdict::host_error_liftable(err, Some(detail));
+                match self.consult(ctx, &liftable).await {
+                    Consultation::NotConsulted => liftable,
+                    Consultation::Substituted { verdict, permitted } => {
+                        let verdict = *verdict;
+                        if permitted {
+                            *resolved_by = Some("approval");
+                            if verdict.decision == Decision::Transform {
+                                return self.fold_transform(ctx, verdict);
+                            }
+                        }
+                        verdict
+                    }
+                }
+            }
+        }
+    }
+
+    /// Apply (enforce) or validate (evaluate_only) one transform (§7.4, §8).
     fn fold_transform(&self, ctx: &mut AgentContext, v: Verdict) -> Verdict {
         let t = match &v.transform {
             Some(t) => t.clone(),
@@ -241,15 +691,36 @@ impl InterceptionEmitter {
         }
     }
 
-    async fn resolve_escalate(
-        &self,
-        ctx: &AgentContext,
-        verdict: Verdict,
-        identity: &str,
-    ) -> Verdict {
+    /// Consult the approval seam for a liftable deny (§9), when the
+    /// profile conditions allow it: `enforce` mode, not
+    /// `agent_shutdown`, a resolver registered, and the verdict
+    /// actually liftable. Enforces the echo rule and the §9
+    /// outcome/verdict consistency requirements.
+    async fn consult(&self, ctx: &AgentContext, verdict: &Verdict) -> Consultation {
+        if !verdict.is_liftable() || self.mode != EnforcementMode::Enforce {
+            return Consultation::NotConsulted;
+        }
+        // §6.1a: nothing to approve at agent_shutdown.
+        if ctx.get("interception_point").and_then(Value::as_str) == Some("agent_shutdown") {
+            return Consultation::NotConsulted;
+        }
+        // §9: no resolver → the deny stands. Conformant, not an error.
         let Some(resolver) = &self.resolver else {
-            return Verdict::host_error(HostError::ApprovalResolverMissing, None);
+            return Consultation::NotConsulted;
         };
+
+        // §9: identity of the context as presented to the resolver —
+        // consultation time, after any transforms that folded earlier.
+        let identity = match self.identity.compute(ctx) {
+            Ok(id) => id,
+            Err((e, detail)) => {
+                return Consultation::Substituted {
+                    verdict: Box::new(Verdict::host_error(e, Some(detail))),
+                    permitted: false,
+                }
+            }
+        };
+
         let ip: InterceptionPoint = ctx
             .get("interception_point")
             .and_then(Value::as_str)
@@ -257,26 +728,283 @@ impl InterceptionEmitter {
             .unwrap_or(InterceptionPoint::AgentStartup);
         let res = resolver
             .resolve(ApprovalRequest {
-                context_identity: identity.to_owned(),
+                context_identity: identity.clone(),
                 interception_point: ip,
-                verdict: &verdict,
+                verdict,
                 context: ctx,
             })
             .await;
+
+        let fail = |e: HostError| Consultation::Substituted {
+            verdict: Box::new(Verdict::host_error(e, None)),
+            permitted: false,
+        };
+        // §9 echo rule (byte-for-byte; None echoes as None).
         if res.context_identity != identity {
-            return Verdict::host_error(HostError::ApprovalActionMismatch, None);
+            return fail(HostError::ApprovalIdentityMismatch);
         }
         let Some(rv) = res.verdict else {
-            return Verdict::host_error(HostError::ApprovalUnresolved, None);
+            return fail(HostError::ApprovalUnresolved);
         };
         if res.outcome == ApprovalOutcome::Unresolved {
-            return Verdict::host_error(HostError::ApprovalUnresolved, None);
+            return fail(HostError::ApprovalUnresolved);
         }
-        // §9/N04: the resolver's verdict crosses the same §5 gate as an
-        // interceptor's.
+        // §9: the resolver's verdict crosses the same §5 gate as an
+        // interceptor's, and outcome/decision must agree (approve MUST
+        // carry a permit, reject MUST carry a deny).
         if rv.validate().is_err() {
-            return Verdict::host_error(HostError::VerdictInvalid, None);
+            return fail(HostError::VerdictInvalid);
         }
-        rv
+        let permitted = match res.outcome {
+            ApprovalOutcome::Approve => {
+                if !rv.decision.permits() {
+                    return fail(HostError::VerdictInvalid);
+                }
+                true
+            }
+            ApprovalOutcome::Reject => {
+                if rv.decision != Decision::Deny {
+                    return fail(HostError::VerdictInvalid);
+                }
+                false
+            }
+            ApprovalOutcome::Unresolved => unreachable!("handled above"),
+        };
+        Consultation::Substituted {
+            verdict: Box::new(rv),
+            permitted,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::Transform;
+    use async_trait::async_trait;
+    use serde_json::json;
+
+    struct Scripted(Verdict);
+    #[async_trait]
+    impl Interceptor for Scripted {
+        async fn intercept(&self, _ctx: &AgentContext) -> Verdict {
+            self.0.clone()
+        }
+    }
+
+    struct Approver(ApprovalOutcome, Verdict);
+    #[async_trait]
+    impl ApprovalResolver for Approver {
+        async fn resolve(&self, req: ApprovalRequest<'_>) -> crate::ApprovalResolution {
+            crate::ApprovalResolution {
+                outcome: self.0,
+                context_identity: req.context_identity.clone(), // echo rule
+                verdict: Some(self.1.clone()),
+            }
+        }
+    }
+
+    fn ctx() -> AgentContext {
+        json!({
+            "spec": "agent-hooks/0.1",
+            "interception_point": "pre_tool_call",
+            "timestamp": "t", "sequence": 0,
+            "agent": {"id": "a", "framework": "x"}, "session": {"id": "s"},
+            "target": {"url": "evil"},
+            "tool_call": {"id": "tc", "name": "t", "args": {"url": "evil"}}
+        })
+        .as_object()
+        .unwrap()
+        .clone()
+    }
+
+    fn transform(path: &str, value: serde_json::Value) -> Verdict {
+        Verdict {
+            decision: Decision::Transform,
+            transform: Some(Transform { path: path.into(), value }),
+            ..Verdict::allow()
+        }
+    }
+
+    fn deny() -> Verdict {
+        Verdict { decision: Decision::Deny, ..Verdict::allow() }
+    }
+
+    #[tokio::test]
+    async fn run_all_runs_everything_and_strictest_wins() {
+        let mut e = InterceptionEmitter::new(EnforcementMode::Enforce, None);
+        e.set_composition(CompositionConfig::run_all());
+        e.register(Box::new(Scripted(deny())));
+        e.register(Box::new(Scripted(Verdict::warn(Some("late".into()), None))));
+        let mut c = ctx();
+        let r = e.emit_unchecked(&mut c).await;
+        assert_eq!(r.verdict.decision, Decision::Deny);
+        assert_eq!(r.verdicts.len(), 2, "run_all: everything runs");
+        assert_eq!(r.decided_by, Some(0));
+        // §7.3: warnings union onto the deny combination.
+        assert_eq!(r.verdict.warnings.len(), 1);
+        assert!(r.fold_truncated.is_none(), "not defined outside first_deny");
+    }
+
+    #[tokio::test]
+    async fn parallel_strictest_transform_conflict_fails_closed() {
+        let mut e = InterceptionEmitter::new(EnforcementMode::Enforce, None);
+        e.set_composition(CompositionConfig::strictest(SynthesisPolicy::Deny));
+        e.register(Box::new(Scripted(transform("$target.url", json!("a")))));
+        e.register(Box::new(Scripted(transform("$target.url", json!("b")))));
+        let mut c = ctx();
+        let r = e.emit_unchecked(&mut c).await;
+        assert_eq!(
+            r.verdict.reason.as_deref(),
+            Some("host_error:transform_conflict")
+        );
+        // Snapshot isolation: neither transform applied.
+        assert_eq!(c["target"]["url"], json!("evil"));
+    }
+
+    #[tokio::test]
+    async fn parallel_strictest_single_transform_applies() {
+        let mut e = InterceptionEmitter::new(EnforcementMode::Enforce, None);
+        e.set_composition(CompositionConfig::strictest(SynthesisPolicy::Deny));
+        e.register(Box::new(Scripted(Verdict::allow())));
+        e.register(Box::new(Scripted(transform("$target.url", json!("safe")))));
+        let mut c = ctx();
+        let r = e.emit_unchecked(&mut c).await;
+        assert_eq!(r.verdict.decision, Decision::Transform);
+        assert_eq!(r.decided_by, Some(1));
+        assert_eq!(c["target"]["url"], json!("safe"));
+        assert_ne!(r.input_identity, r.enforced_identity);
+    }
+
+    #[tokio::test]
+    async fn unanimous_disagreement_synthesizes() {
+        let mut e = InterceptionEmitter::new(EnforcementMode::Enforce, None);
+        e.set_composition(CompositionConfig::unanimous(
+            SynthesisPolicy::Deny,
+            SynthesisPolicy::Deny,
+        ));
+        e.register(Box::new(Scripted(Verdict::allow())));
+        e.register(Box::new(Scripted(transform("$target.url", json!("x")))));
+        let mut c = ctx();
+        let r = e.emit_unchecked(&mut c).await;
+        assert_eq!(
+            r.verdict.reason.as_deref(),
+            Some("host_error:composition_disagreement")
+        );
+        assert_eq!(c["target"]["url"], json!("evil"), "transform not applied");
+        assert_eq!(r.decided_by, None);
+    }
+
+    #[tokio::test]
+    async fn first_deny_no_resolver_deny_stands_without_error() {
+        let mut e = InterceptionEmitter::new(EnforcementMode::Enforce, None);
+        e.register(Box::new(Scripted(Verdict::escalate(Some("check".into()), None))));
+        let mut c = ctx();
+        let r = e.emit_unchecked(&mut c).await;
+        // §9: no resolver → the liftable deny stands, NOT an error.
+        assert_eq!(r.verdict.decision, Decision::Deny);
+        assert_eq!(r.verdict.reason.as_deref(), Some("check"));
+        assert!(r.verdict.is_liftable());
+        assert_eq!(r.resolved_by, None);
+    }
+
+    #[tokio::test]
+    async fn first_deny_stop_truncates_and_records_substitution() {
+        let mut e = InterceptionEmitter::new(
+            EnforcementMode::Enforce,
+            Some(Box::new(Approver(ApprovalOutcome::Approve, Verdict::allow()))),
+        );
+        e.set_composition(CompositionConfig::first_deny(OnApproval::Stop));
+        e.register(Box::new(Scripted(Verdict::escalate(None, None))));
+        e.register(Box::new(Scripted(deny()))); // must be skipped
+        let mut c = ctx();
+        let r = e.emit_unchecked(&mut c).await;
+        assert_eq!(r.verdict.decision, Decision::Allow);
+        assert_eq!(r.fold_truncated, Some(true));
+        assert_eq!(r.resolved_by, Some("approval"));
+        assert_eq!(r.decided_by, Some(0));
+    }
+
+    #[tokio::test]
+    async fn first_deny_resume_continues_the_fold() {
+        let mut e = InterceptionEmitter::new(
+            EnforcementMode::Enforce,
+            Some(Box::new(Approver(ApprovalOutcome::Approve, Verdict::allow()))),
+        );
+        e.set_composition(CompositionConfig::first_deny(OnApproval::Resume));
+        e.register(Box::new(Scripted(Verdict::escalate(None, None))));
+        e.register(Box::new(Scripted(deny()))); // now runs — and denies
+        let mut c = ctx();
+        let r = e.emit_unchecked(&mut c).await;
+        assert_eq!(r.verdict.decision, Decision::Deny);
+        assert_eq!(r.decided_by, Some(1));
+        assert_eq!(r.resolved_by, Some("approval"));
+        assert_eq!(r.fold_truncated, Some(false));
+    }
+
+    #[tokio::test]
+    async fn echo_rule_violation_fails_closed() {
+        struct BadEcho;
+        #[async_trait]
+        impl ApprovalResolver for BadEcho {
+            async fn resolve(&self, _req: ApprovalRequest<'_>) -> crate::ApprovalResolution {
+                crate::ApprovalResolution {
+                    outcome: ApprovalOutcome::Approve,
+                    context_identity: Some("sha256:forged".into()),
+                    verdict: Some(Verdict::allow()),
+                }
+            }
+        }
+        let mut e = InterceptionEmitter::new(EnforcementMode::Enforce, Some(Box::new(BadEcho)));
+        e.register(Box::new(Scripted(Verdict::escalate(None, None))));
+        let mut c = ctx();
+        let r = e.emit_unchecked(&mut c).await;
+        assert_eq!(
+            r.verdict.reason.as_deref(),
+            Some("host_error:approval_identity_mismatch")
+        );
+    }
+
+    #[tokio::test]
+    async fn null_provider_unbound_record() {
+        let mut e = InterceptionEmitter::new(EnforcementMode::Enforce, None);
+        e.set_identity_provider(IdentityProvider::Null);
+        e.register(Box::new(Scripted(Verdict::allow())));
+        let mut c = ctx();
+        let r = e.emit_unchecked(&mut c).await;
+        assert!(r.input_identity.is_none());
+        assert!(r.enforced_identity.is_none());
+        assert!(r.identity_provider.is_none());
+    }
+
+    #[tokio::test]
+    async fn default_provider_rejects_big_int_before_dispatch() {
+        let mut e = InterceptionEmitter::new(EnforcementMode::Enforce, None);
+        e.register(Box::new(Scripted(Verdict::allow())));
+        let mut c = ctx();
+        c.insert("target".into(), json!({"id": 9_007_199_254_740_993_i64}));
+        let r = e.emit_unchecked(&mut c).await;
+        assert_eq!(
+            r.verdict.reason.as_deref(),
+            Some("host_error:context_invalid")
+        );
+        assert!(r.verdict.message.as_deref().unwrap().contains("string-encode"));
+        assert!(r.verdicts.is_empty(), "no interceptor ran");
+    }
+
+    #[tokio::test]
+    async fn shutdown_never_consults() {
+        let mut e = InterceptionEmitter::new(
+            EnforcementMode::Enforce,
+            Some(Box::new(Approver(ApprovalOutcome::Approve, Verdict::allow()))),
+        );
+        e.register(Box::new(Scripted(Verdict::escalate(None, None))));
+        let mut c = ctx();
+        c.insert("interception_point".into(), json!("agent_shutdown"));
+        c.insert("summary".into(), json!({"reason": "completed"}));
+        let r = e.emit_unchecked(&mut c).await;
+        // §6.1a: the liftable deny is recorded, the seam untouched.
+        assert!(r.verdict.is_liftable());
+        assert_eq!(r.resolved_by, None);
     }
 }

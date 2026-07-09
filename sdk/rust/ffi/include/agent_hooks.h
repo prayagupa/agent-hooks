@@ -34,10 +34,17 @@ AhResult *ah_apply_transform_ctx(const char *ctx_json, const char *path,
                                  const char *value_json);
 AhResult *ah_validate_transform_ctx(const char *ctx_json, const char *path,
                                     const char *value_json);
-/* decided_by: registration index of the deciding interceptor; -1 = none. */
+/* options_json: {input_identity?, identity_provider?, enforced_identity?,
+ * decided_by?, composition, verdicts?, fold_truncated?, resolved_by?}
+ * (spec section 10.3). */
 AhResult *ah_finalize(const char *ctx_json, const char *verdict_json,
-                      const char *mode, const char *input_identity,
-                      int64_t decided_by);
+                      const char *mode, const char *options_json);
+
+/* Severity-max aggregation for multi-verdict composition profiles
+ * (spec sections 7.3, 7.5). Returns {combined, decided_by, consult,
+ * apply_transform, verdicts}. */
+AhResult *ah_compose_aggregate(const char *composition_json,
+                               const char *verdicts_json);
 
 /* CTK engine (spec section 13.2) */
 AhResult *ah_ctk_scripted_intercept(const char *rules_json,

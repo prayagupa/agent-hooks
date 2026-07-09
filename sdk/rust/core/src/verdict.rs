@@ -1,8 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-//! Verdict wire normalization (§5) and multi-interceptor combination (§7.1).
+//! Verdict wire normalization (§5).
 
-use crate::types::{Decision, Evidence, HostError, Transform, Verdict};
+use crate::types::{Decision, Evidence, HostError, Transform, Verdict, Warning};
 use serde_json::Value;
 
 /// Parse and validate an interceptor's wire return value into a `Verdict`
@@ -16,13 +16,13 @@ pub fn from_wire(raw: &Value) -> Result<Verdict, (HostError, String)> {
     let decision = match obj.get("decision").and_then(Value::as_str) {
         Some("allow") => Decision::Allow,
         Some("deny") => Decision::Deny,
-        Some("warn") => Decision::Warn,
-        Some("escalate") => Decision::Escalate,
         Some("transform") => Decision::Transform,
+        // The closed set is three (§5.1): warn is allow+warnings,
+        // escalate is deny+approval. The old wire names fail closed.
         other => {
             return Err((
                 HostError::VerdictInvalid,
-                format!("verdict.decision invalid: {other:?}"),
+                format!("verdict.decision invalid: {other:?} (§5.1: allow|deny|transform)"),
             ))
         }
     };
@@ -37,6 +37,69 @@ pub fn from_wire(raw: &Value) -> Result<Verdict, (HostError, String)> {
         }
     }
     let message = opt_string(obj, "message")?;
+
+    let warnings = match obj.get("warnings") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::Array(a)) => a
+            .iter()
+            .map(|w| match w {
+                Value::Object(m) => {
+                    let reason = match m.get("reason") {
+                        None | Some(Value::Null) => None,
+                        Some(Value::String(s)) if !s.starts_with("host_error:") => {
+                            Some(s.clone())
+                        }
+                        _ => {
+                            return Err((
+                                HostError::VerdictInvalid,
+                                "warnings[].reason must be a non-reserved string".into(),
+                            ))
+                        }
+                    };
+                    let message = match m.get("message") {
+                        None | Some(Value::Null) => None,
+                        Some(Value::String(s)) => Some(s.clone()),
+                        _ => {
+                            return Err((
+                                HostError::VerdictInvalid,
+                                "warnings[].message must be string or null".into(),
+                            ))
+                        }
+                    };
+                    Ok(Warning { reason, message })
+                }
+                _ => Err((
+                    HostError::VerdictInvalid,
+                    "warnings must be an array of objects (§5)".into(),
+                )),
+            })
+            .collect::<Result<_, _>>()?,
+        Some(_) => {
+            return Err((
+                HostError::VerdictInvalid,
+                "warnings must be an array of objects (§5)".into(),
+            ))
+        }
+    };
+
+    let approval = match obj.get("approval") {
+        None | Some(Value::Null) => None,
+        Some(Value::Object(m)) => {
+            if decision != Decision::Deny {
+                return Err((
+                    HostError::VerdictInvalid,
+                    "approval block permitted only on deny (§5.1)".into(),
+                ));
+            }
+            Some(m.clone())
+        }
+        Some(_) => {
+            return Err((
+                HostError::VerdictInvalid,
+                "verdict.approval must be an object (§5)".into(),
+            ))
+        }
+    };
 
     let transform = match obj.get("transform") {
         None | Some(Value::Null) => None,
@@ -121,6 +184,8 @@ pub fn from_wire(raw: &Value) -> Result<Verdict, (HostError, String)> {
         decision,
         reason,
         message,
+        warnings,
+        approval,
         transform,
         evidence,
         result_labels,
@@ -173,6 +238,44 @@ mod tests {
     }
 
     #[test]
+    fn from_wire_rejects_removed_decisions() {
+        // §5.1: warn and escalate are not wire decisions anymore.
+        assert!(from_wire(&json!({"decision": "warn"})).is_err());
+        assert!(from_wire(&json!({"decision": "escalate"})).is_err());
+    }
+
+    #[test]
+    fn from_wire_liftable_deny() {
+        let v = from_wire(&json!({"decision": "deny", "approval": {}})).unwrap();
+        assert!(v.is_liftable());
+        let v = from_wire(&json!({"decision": "deny"})).unwrap();
+        assert!(!v.is_liftable());
+    }
+
+    #[test]
+    fn from_wire_approval_only_on_deny() {
+        assert!(from_wire(&json!({"decision": "allow", "approval": {}})).is_err());
+        assert!(from_wire(&json!({"decision": "deny", "approval": []})).is_err());
+    }
+
+    #[test]
+    fn from_wire_warnings() {
+        let v = from_wire(&json!({
+            "decision": "allow",
+            "warnings": [{"reason": "pii", "message": "found ssn"}]
+        }))
+        .unwrap();
+        assert_eq!(v.warnings.len(), 1);
+        assert_eq!(v.warnings[0].reason.as_deref(), Some("pii"));
+        assert!(from_wire(&json!({"decision": "allow", "warnings": ["x"]})).is_err());
+        assert!(from_wire(&json!({
+            "decision": "allow",
+            "warnings": [{"reason": "host_error:x"}]
+        }))
+        .is_err());
+    }
+
+    #[test]
     fn from_wire_rejects_host_error_reason() {
         let e = from_wire(&json!({"decision": "deny", "reason": "host_error:x"})).unwrap_err();
         assert_eq!(e.0, HostError::VerdictInvalid);
@@ -191,7 +294,4 @@ mod tests {
         }))
         .is_err());
     }
-
-
-
 }

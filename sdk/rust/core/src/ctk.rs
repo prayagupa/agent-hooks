@@ -9,6 +9,7 @@
 //! orchestration loop that drives the native [`Harness`]. The in-tree
 //! [`ReferenceHarness`] is the CTK self-test target.
 
+use crate::composition::CompositionConfig;
 use crate::ctk_engine::{
     assert_vector, scripted_intercept, scripted_resolve, should_skip, IdentityPair, RunRecord,
     VectorResult,
@@ -90,7 +91,10 @@ struct ScriptedResolver {
 impl ApprovalResolver for ScriptedResolver {
     async fn resolve(&self, request: ApprovalRequest<'_>) -> ApprovalResolution {
         let ctx_value = Value::Object(request.context.clone());
-        let out = scripted_resolve(&self.rules, &ctx_value, &request.context_identity);
+        // §10.1: identity may be None (null provider). The scripted
+        // engine works in strings; "" round-trips to None below.
+        let request_identity = request.context_identity.clone().unwrap_or_default();
+        let out = scripted_resolve(&self.rules, &ctx_value, &request_identity);
         // Infallible resolver trait: a scripted "raise" maps to a
         // resolution whose verdict fails the §5 gate (fail closed).
         if out.get("__ctk_fault__").is_some() {
@@ -108,12 +112,14 @@ impl ApprovalResolver for ScriptedResolver {
         let verdict = out.get("verdict").map(|v| {
             crate::verdict_from_wire(v).expect("malformed approval_script verdict")
         });
+        let echoed = out["context_identity"].as_str().unwrap_or_default();
         ApprovalResolution {
             outcome,
-            context_identity: out["context_identity"]
-                .as_str()
-                .unwrap_or_default()
-                .to_owned(),
+            context_identity: if echoed.is_empty() && request.context_identity.is_none() {
+                None
+            } else {
+                Some(echoed.to_owned())
+            },
             verdict,
         }
     }
@@ -130,13 +136,15 @@ pub trait Harness: Send {
     fn capabilities(&self) -> Vec<String>;
 
     /// Wire the scenario's mock model + tools into the framework,
-    /// register the interceptors and resolver, set the enforcement mode.
+    /// register the interceptors and resolver, set the enforcement
+    /// mode and the vector's composition profile (§7.1).
     fn setup(
         &mut self,
         scenario: Value,
         interceptors: Vec<Box<dyn Interceptor>>,
         resolver: Option<Box<dyn ApprovalResolver>>,
         mode: EnforcementMode,
+        composition: CompositionConfig,
     );
 
     /// Execute one session; return what happened.
@@ -200,8 +208,20 @@ pub async fn run_vector(harness: &mut dyn Harness, vector: &Value) -> VectorResu
         Some("evaluate_only") => EnforcementMode::EvaluateOnly,
         _ => EnforcementMode::Enforce,
     };
+    // §13.2: composition vectors carry the profile/knobs they apply to;
+    // absent means the pre-P-003 default.
+    let composition: CompositionConfig = vector
+        .get("composition")
+        .and_then(|c| serde_json::from_value(c.clone()).ok())
+        .unwrap_or_default();
 
-    harness.setup(vector["scenario"].clone(), interceptors, resolver, mode);
+    harness.setup(
+        vector["scenario"].clone(),
+        interceptors,
+        resolver,
+        mode,
+        composition,
+    );
     let rr = harness.run().await;
     harness.teardown();
 
@@ -381,11 +401,13 @@ impl Harness for ReferenceHarness {
         interceptors: Vec<Box<dyn Interceptor>>,
         resolver: Option<Box<dyn ApprovalResolver>>,
         mode: EnforcementMode,
+        composition: CompositionConfig,
     ) {
         self.scenario = scenario;
         self.tool_log.clear();
         self.session_counter += 1;
         let mut emitter = InterceptionEmitter::new(mode, resolver);
+        emitter.set_composition(composition);
         for interceptor in interceptors {
             emitter.register(interceptor);
         }

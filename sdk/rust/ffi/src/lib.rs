@@ -154,7 +154,9 @@ pub unsafe extern "C" fn ah_validate_transform_ctx(
     ))
 }
 
-/// §6/§10 finalize
+/// §10.3 finalize. `options_json` carries identities, provider,
+/// decided_by, composition, verdict summaries, fold_truncated, and
+/// resolved_by (see `ffi_surface::finalize`).
 ///
 /// # Safety
 /// All pointers must be valid NUL-terminated UTF-8 C strings.
@@ -163,15 +165,29 @@ pub unsafe extern "C" fn ah_finalize(
     ctx_json: *const c_char,
     verdict_json: *const c_char,
     mode: *const c_char,
-    input_identity: *const c_char,
-    decided_by: i64,
+    options_json: *const c_char,
 ) -> *mut AhResult {
     boxed(core::finalize(
         from_c(ctx_json),
         from_c(verdict_json),
         from_c(mode),
-        from_c(input_identity),
-        decided_by,
+        from_c(options_json),
+    ))
+}
+
+/// §7.3/§7.5 aggregation for multi-verdict profiles (see
+/// `ffi_surface::compose_aggregate`).
+///
+/// # Safety
+/// All pointers must be valid NUL-terminated UTF-8 C strings.
+#[no_mangle]
+pub unsafe extern "C" fn ah_compose_aggregate(
+    composition_json: *const c_char,
+    verdicts_json: *const c_char,
+) -> *mut AhResult {
+    boxed(core::compose_aggregate(
+        from_c(composition_json),
+        from_c(verdicts_json),
     ))
 }
 

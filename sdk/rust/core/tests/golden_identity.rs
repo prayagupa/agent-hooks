@@ -34,7 +34,7 @@ fn golden_canonical_json() {
 fn golden_context_identity() {
     for f in load() {
         let ctx: AgentContext = serde_json::from_value(f["ctx"].clone()).unwrap();
-        let got = context_identity(&ctx);
+        let got = context_identity(&ctx).expect("golden fixtures are valid I-JSON");
         assert_eq!(
             got,
             f["expect"]["context_identity"].as_str().unwrap(),
@@ -42,6 +42,18 @@ fn golden_context_identity() {
             f["id"]
         );
     }
+}
+
+#[test]
+fn golden_provider_rejects_beyond_2_53() {
+    // §10.2 input domain: the jcs-sha256 provider fails closed on
+    // integral values outside ±(2^53−1) instead of silently rounding.
+    let mut f = load().into_iter().next().unwrap();
+    f["ctx"]["target"] = serde_json::json!({"id": 9_007_199_254_740_993_i64});
+    let ctx: AgentContext = serde_json::from_value(f["ctx"].clone()).unwrap();
+    let (e, detail) = context_identity(&ctx).unwrap_err();
+    assert_eq!(e.to_string(), "host_error:context_invalid");
+    assert!(detail.contains("string-encode 64-bit identifiers"), "{detail}");
 }
 
 #[test]

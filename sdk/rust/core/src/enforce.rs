@@ -1,20 +1,21 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-//! Stateless enforcement primitives (§6, §7.1, §8, §10).
+//! Stateless enforcement primitives (§6, §7.4, §8, §10.3).
 //!
-//! With §7.1 sequential fold-through, transform application happens
-//! **during** interceptor dispatch (each interceptor sees the prior
-//! transforms' effect), so the per-language emitter loop calls
-//! [`apply_transform_to_ctx`] between interceptors (in `enforce` mode)
-//! and [`finalize`] once at the end to compute identities and build the
-//! [`InterceptionRecord`]. Both are pure; everything that calls back
-//! into user code stays in the wrapper.
+//! Transform application happens **during** dispatch in sequential
+//! profiles (each interceptor sees the prior transforms' effect, §7.4)
+//! and once, on the winner, in parallel profiles (§7.5). The
+//! per-language emitter loop calls [`apply_transform_to_ctx`] at those
+//! points and [`finalize`] once at the end to compute identities and
+//! build the [`InterceptionRecord`]. Both are pure; everything that
+//! calls back into user code stays in the wrapper.
 
 use crate::canonical::context_identity;
+use crate::composition::CompositionConfig;
 use crate::path;
 use crate::types::{
     AgentContext, EnforcementMode, HostError, InterceptionPoint, InterceptionRecord, Transform,
-    Verdict,
+    Verdict, VerdictSummary, JCS_SHA256,
 };
 use serde_json::Value;
 use std::str::FromStr;
@@ -44,10 +45,10 @@ fn interception_point_of(ctx: &AgentContext) -> Result<InterceptionPoint, HostEr
 }
 
 /// Apply one `transform` to the context's `target` and mirror it into
-/// the L1 field it aliases (§4.3, §5.2). Fails closed on a forbidden
-/// point or unresolvable path; the caller synthesizes the `host_error`
-/// deny. In `evaluate_only` mode callers use [`validate_transform`]
-/// instead (§8: validated, not applied).
+/// the conditional field it aliases (§4.3, §5.2). Fails closed on a
+/// forbidden point or unresolvable path; the caller synthesizes the
+/// `host_error` deny. In `evaluate_only` mode callers use
+/// [`validate_transform`] instead (§8: validated, not applied).
 pub fn apply_transform_to_ctx(
     ctx: &mut AgentContext,
     transform: &Transform,
@@ -74,18 +75,37 @@ pub fn validate_transform(ctx: &AgentContext, transform: &Transform) -> Result<(
     path::apply(target, &transform.path, transform.value.clone()).map(|_| ())
 }
 
-/// Build the [`InterceptionRecord`] for one completed interception
-/// (§6, §10). `input_identity` MUST have been computed from the context
-/// **before** interceptor dispatch (§10.2); `enforced_identity` is
-/// computed here from the post-fold context, so the two differ exactly
-/// when a transform was applied.
-pub fn finalize(
-    ctx: &AgentContext,
-    verdict: Verdict,
-    mode: EnforcementMode,
-    input_identity: &str,
-    decided_by: Option<u32>,
-) -> InterceptionRecord {
+/// Everything [`finalize`] needs beyond the context and combined
+/// verdict (§10.3).
+#[derive(Debug, Clone, Default)]
+pub struct FinalizeMeta {
+    /// Provider output computed **before** dispatch; `None` when the
+    /// identity provider is `null` or rejected the context.
+    pub input_identity: Option<String>,
+    /// The declared provider name (§10.1). When `Some(JCS_SHA256)`,
+    /// [`finalize`] computes `enforced_identity` from the post-fold
+    /// context itself; a custom provider's host passes
+    /// `enforced_identity` explicitly.
+    pub identity_provider: Option<String>,
+    /// Pre-computed post-composition identity for custom providers.
+    /// Ignored when `identity_provider == Some(JCS_SHA256)`.
+    pub enforced_identity: Option<String>,
+    pub decided_by: Option<u32>,
+    pub composition: CompositionConfig,
+    /// Per-interceptor summaries (multi-verdict profiles, §10.3).
+    pub verdicts: Vec<VerdictSummary>,
+    /// `sequential/first_deny` only (§7.4).
+    pub fold_truncated: Option<bool>,
+    /// `"approval"` iff a resolution substituted for a verdict (§7.6).
+    pub resolved_by: Option<&'static str>,
+}
+
+/// Build the [`InterceptionRecord`] for one completed emission (§10.3).
+/// `meta.input_identity` MUST have been computed from the context
+/// **before** interceptor dispatch; `enforced_identity` is computed
+/// here (default provider) from the post-composition context, so the
+/// two differ exactly when a transform was applied.
+pub fn finalize(ctx: &AgentContext, verdict: Verdict, mode: EnforcementMode, meta: FinalizeMeta) -> InterceptionRecord {
     let ip = interception_point_of(ctx).unwrap_or(InterceptionPoint::AgentStartup);
     let session_id = ctx
         .get("session")
@@ -94,19 +114,30 @@ pub fn finalize(
         .unwrap_or_default()
         .to_owned();
     let sequence = ctx.get("sequence").and_then(Value::as_i64).unwrap_or(-1);
+    let enforced_identity = match meta.identity_provider.as_deref() {
+        Some(JCS_SHA256) => context_identity(ctx).ok(),
+        Some(_) => meta.enforced_identity,
+        None => None,
+    };
     InterceptionRecord {
         interception_point: ip,
         mode,
         verdict,
-        input_identity: input_identity.to_owned(),
-        enforced_identity: context_identity(ctx),
+        input_identity: meta.input_identity,
+        enforced_identity,
+        identity_provider: meta.identity_provider,
         session_id,
         sequence,
-        decided_by,
+        decided_by: meta.decided_by,
+        composition: meta.composition,
+        verdicts: meta.verdicts,
+        fold_truncated: meta.fold_truncated,
+        resolved_by: meta.resolved_by,
     }
 }
 
-/// Mirror the transformed target back into the L1 field it aliases (§4.3).
+/// Mirror the transformed target back into the conditional field it
+/// aliases (§4.3).
 fn write_back_target(ip: InterceptionPoint, ctx: &mut AgentContext, transformed: &Value) {
     match ip {
         InterceptionPoint::Input => {
@@ -157,19 +188,56 @@ mod tests {
         .clone()
     }
 
+    fn default_meta(ctx: &AgentContext) -> FinalizeMeta {
+        FinalizeMeta {
+            input_identity: context_identity(ctx).ok(),
+            identity_provider: Some(JCS_SHA256.to_owned()),
+            ..FinalizeMeta::default()
+        }
+    }
+
     #[test]
     fn allow_identities_equal() {
         let c = ctx("pre_tool_call", json!({"url": "x"}));
-        let input_id = context_identity(&c);
-        let r = finalize(&c, Verdict::allow(), EnforcementMode::Enforce, &input_id, None);
+        let r = finalize(&c, Verdict::allow(), EnforcementMode::Enforce, default_meta(&c));
         assert_eq!(r.input_identity, r.enforced_identity);
+        assert!(r.input_identity.is_some());
+        assert_eq!(r.identity_provider.as_deref(), Some(JCS_SHA256));
         assert!(r.proceeds());
+    }
+
+    #[test]
+    fn null_provider_null_identities() {
+        let c = ctx("pre_tool_call", json!({"url": "x"}));
+        let r = finalize(
+            &c,
+            Verdict::allow(),
+            EnforcementMode::Enforce,
+            FinalizeMeta::default(),
+        );
+        assert!(r.input_identity.is_none());
+        assert!(r.enforced_identity.is_none());
+        assert!(r.identity_provider.is_none());
+    }
+
+    #[test]
+    fn custom_provider_uses_supplied_identity() {
+        let c = ctx("pre_tool_call", json!({"url": "x"}));
+        let meta = FinalizeMeta {
+            input_identity: Some("host:1".into()),
+            enforced_identity: Some("host:1".into()),
+            identity_provider: Some("host-hash".into()),
+            ..FinalizeMeta::default()
+        };
+        let r = finalize(&c, Verdict::allow(), EnforcementMode::Enforce, meta);
+        assert_eq!(r.enforced_identity.as_deref(), Some("host:1"));
+        assert_eq!(r.identity_provider.as_deref(), Some("host-hash"));
     }
 
     #[test]
     fn transform_applies_and_writes_back() {
         let mut c = ctx("pre_tool_call", json!({"url": "evil"}));
-        let input_id = context_identity(&c);
+        let input_id = context_identity(&c).ok();
         let t = Transform {
             path: "$target.url".into(),
             value: json!("safe"),
@@ -182,7 +250,12 @@ mod tests {
             transform: Some(t),
             ..Verdict::allow()
         };
-        let r = finalize(&c, v, EnforcementMode::Enforce, &input_id, None);
+        let meta = FinalizeMeta {
+            input_identity: input_id,
+            identity_provider: Some(JCS_SHA256.to_owned()),
+            ..FinalizeMeta::default()
+        };
+        let r = finalize(&c, v, EnforcementMode::Enforce, meta);
         assert_ne!(r.input_identity, r.enforced_identity);
     }
 

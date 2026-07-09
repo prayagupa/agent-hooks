@@ -15,14 +15,14 @@
 //!    harness's `RunRecord`.
 //!
 //! Everything else — dotted-path lookup, rule matching, sequence
-//! checking, per-assertion diffing, L0 context validation — is here so
+//! checking, per-assertion diffing, required-core context validation — is here so
 //! it is identical across bindings.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 const IP: &str = "interception_point";
-const L0: &[&str] = &[
+const REQUIRED_FIELDS: &[&str] = &[
     "spec",
     "interception_point",
     "timestamp",
@@ -142,8 +142,8 @@ pub fn scripted_resolve(rules: &[Value], ctx: &Value, context_identity: &str) ->
 /// One `(input_identity, enforced_identity)` pair per interception.
 #[derive(Debug, Deserialize)]
 pub struct IdentityPair {
-    pub input_identity: String,
-    pub enforced_identity: String,
+    pub input_identity: Option<String>,
+    pub enforced_identity: Option<String>,
 }
 
 /// Wire-shaped `RunRecord` the harness returns.
@@ -173,7 +173,7 @@ pub struct VectorResult {
     pub failures: Vec<String>,
 }
 
-fn validate_l0(ctx: &Value, failures: &mut Vec<String>) {
+fn validate_required(ctx: &Value, failures: &mut Vec<String>) {
     let ip = ctx.get(IP).and_then(Value::as_str).unwrap_or("<missing>");
     let obj = match ctx.as_object() {
         Some(o) => o,
@@ -182,9 +182,9 @@ fn validate_l0(ctx: &Value, failures: &mut Vec<String>) {
             return;
         }
     };
-    for k in L0 {
+    for k in REQUIRED_FIELDS {
         if !obj.contains_key(*k) {
-            failures.push(format!("{ip}: missing L0 field {k:?}"));
+            failures.push(format!("{ip}: missing required field {k:?}"));
         }
     }
 }
@@ -239,7 +239,7 @@ fn assert_interceptions(expect: &Value, recorded: &[Value], failures: &mut Vec<S
             .and_then(Value::as_bool)
             .unwrap_or(true)
         {
-            validate_l0(r, failures);
+            validate_required(r, failures);
         }
         let ip = e.get(IP).and_then(Value::as_str).unwrap_or("");
         if let Some(preds) = e.get("context").and_then(Value::as_object) {

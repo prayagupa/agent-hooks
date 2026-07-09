@@ -12,9 +12,14 @@
 //! `"host_error:verdict_invalid"`); bindings raise a native exception
 //! carrying both.
 
+use crate::composition::{
+    aggregate_strictest, is_unanimous_allow, summaries, with_unions, Aggregate, CompositionConfig,
+    CompositionProfile, SynthesisPolicy,
+};
+use crate::enforce::FinalizeMeta;
+use crate::types::{EnforcementMode, Verdict};
 use crate::{
-    canonical, enforce as enforce_mod, path, types::EnforcementMode, verdict, AgentContext,
-    HostError, Transform,
+    canonical, enforce as enforce_mod, path, verdict, AgentContext, HostError, Transform,
 };
 use serde_json::Value;
 
@@ -29,17 +34,19 @@ fn parse_json(s: &str, what: &str) -> Result<Value, FfiError> {
     serde_json::from_str(s).map_err(|e| err(HostError::ContextInvalid, format!("{what}: {e}")))
 }
 
-/// §10.1: canonical JSON of an arbitrary value.
+/// §10.2: canonical JSON of an arbitrary value (RFC 8785).
 pub fn canonical_json(value_json: &str) -> Result<String, FfiError> {
     let v = parse_json(value_json, "value")?;
     Ok(canonical::canonical_json(&v))
 }
 
-/// §10.2: `"sha256:" + hex(SHA-256(canonical_json(ctx_L01)))`.
+/// §10.2: the `jcs-sha256` identity provider. Fails closed
+/// (`host_error:context_invalid` with remediation detail) on a
+/// non-I-JSON projection.
 pub fn context_identity(ctx_json: &str) -> Result<String, FfiError> {
     let ctx: AgentContext = serde_json::from_str(ctx_json)
         .map_err(|e| err(HostError::ContextInvalid, format!("ctx: {e}")))?;
-    Ok(canonical::context_identity(&ctx))
+    canonical::context_identity(&ctx).map_err(|(e, d)| err(e, d))
 }
 
 /// §5: validate an interceptor's wire return value. Returns the normalized
@@ -62,9 +69,9 @@ pub fn apply_transform(
     Ok(serde_json::to_string(&result).expect("target serialize"))
 }
 
-/// §7.1 fold-through: apply one transform to the context's `target`
-/// (and its L1 alias) so the next interceptor sees the effect. Returns
-/// the updated context JSON.
+/// §7.4 fold-through / §7.5 winner application: apply one transform to
+/// the context's `target` (and its conditional alias) so its effect is
+/// observable. Returns the updated context JSON.
 pub fn apply_transform_ctx(
     ctx_json: &str,
     path_str: &str,
@@ -93,35 +100,161 @@ pub fn validate_transform_ctx(
     Ok("null".to_owned())
 }
 
-/// §6/§10: build the `InterceptionRecord` for one completed
-/// interception. `input_identity` MUST have been computed via
-/// [`context_identity`] before interceptor dispatch; transforms were
-/// already applied during the §7.1 fold via [`apply_transform_ctx`].
-/// The verdict is deserialized permissively because the emitter may
-/// pass a host-synthesized `host_error:*` deny (§6.3).
-/// `decided_by` uses `-1` for "none" (pure allow / host-synthesized).
+/// §7.3/§7.5 aggregation for the multi-verdict profiles. Bindings drive
+/// dispatch natively (they own interceptor callbacks and the transform
+/// fold) and delegate every aggregation decision here so all SDKs agree.
+///
+/// Input: the composition config JSON (§10.3 `composition` block) and
+/// the array of §5-normalized verdicts, index-aligned with registration
+/// order. Output JSON:
+///
+/// ```jsonc
+/// {
+///   "combined": <verdict>,        // winner (or synthesized) with §7.3 unions
+///   "decided_by": 0 | null,       // aggregation winner index
+///   "consult": true | false,      // combined is a liftable deny the profile
+///                                 // says to consult (env checks — resolver
+///                                 // present, mode, shutdown — stay native)
+///   "apply_transform": true | false // parallel only: combined is the single
+///                                 // winning transform, not yet applied
+/// }
+/// ```
+pub fn compose_aggregate(
+    composition_json: &str,
+    verdicts_json: &str,
+) -> Result<String, FfiError> {
+    let cfg: CompositionConfig = serde_json::from_str(composition_json)
+        .map_err(|e| err(HostError::ContextInvalid, format!("composition: {e}")))?;
+    let raw: Vec<Value> = serde_json::from_str(verdicts_json)
+        .map_err(|e| err(HostError::VerdictInvalid, format!("verdicts: {e}")))?;
+    if raw.is_empty() {
+        return Err(err(HostError::NoInterceptor, "empty verdict list"));
+    }
+    // Verdicts are deserialized permissively: the emitter may pass
+    // host-synthesized host_error:* denies (§6.3), which from_wire
+    // rejects by design.
+    let all: Vec<Verdict> = raw
+        .iter()
+        .map(|v| serde_json::from_value(v.clone()))
+        .collect::<Result<_, _>>()
+        .map_err(|e| err(HostError::VerdictInvalid, format!("verdicts: {e}")))?;
+
+    let sequential = cfg.profile.is_sequential();
+    let (combined, decided_by, apply_transform) = match cfg.profile {
+        CompositionProfile::ParallelUnanimous if !is_unanimous_allow(&all) => {
+            let policy = cfg.on_disagreement.unwrap_or(SynthesisPolicy::Deny);
+            let v = match policy {
+                SynthesisPolicy::Deny => Verdict::host_error(
+                    HostError::CompositionDisagreement,
+                    Some("non-unanimous outcome under parallel/unanimous".into()),
+                ),
+                SynthesisPolicy::Approval => Verdict::host_error_liftable(
+                    HostError::CompositionDisagreement,
+                    Some("non-unanimous outcome under parallel/unanimous".into()),
+                ),
+            };
+            (with_unions(v, &all), None, false)
+        }
+        _ => match aggregate_strictest(&all, sequential) {
+            Aggregate::TransformConflict(idxs) => {
+                let policy = cfg.on_transform_conflict.unwrap_or(SynthesisPolicy::Deny);
+                let detail = format!("conflicting transforms from interceptors {idxs:?}");
+                let v = match policy {
+                    SynthesisPolicy::Deny => {
+                        Verdict::host_error(HostError::TransformConflict, Some(detail))
+                    }
+                    SynthesisPolicy::Approval => {
+                        Verdict::host_error_liftable(HostError::TransformConflict, Some(detail))
+                    }
+                };
+                (with_unions(v, &all), None, false)
+            }
+            Aggregate::Winner(i) => {
+                let winner = all[i].clone();
+                let decided_by = match winner.decision {
+                    crate::Decision::Allow => None,
+                    _ => Some(i as u32),
+                };
+                let apply = !sequential && winner.decision == crate::Decision::Transform;
+                (with_unions(winner, &all), decided_by, apply)
+            }
+        },
+    };
+
+    let consult = combined.is_liftable();
+    let out = serde_json::json!({
+        "combined": combined,
+        "decided_by": decided_by,
+        "consult": consult,
+        "apply_transform": apply_transform,
+        "verdicts": summaries(&all),
+    });
+    Ok(out.to_string())
+}
+
+/// §10.3: build the `InterceptionRecord` for one completed emission.
+/// `options_json`:
+///
+/// ```jsonc
+/// {
+///   "input_identity": "..." | null,
+///   "identity_provider": "jcs-sha256" | "<host-defined>" | null,
+///   "enforced_identity": "..." | null,  // custom providers only;
+///                                       // jcs-sha256 is computed here
+///   "decided_by": 0 | null,
+///   "composition": { "profile": "...", ... },   // REQUIRED
+///   "verdicts": [ {"index", "decision", "reason"?}, ... ],
+///   "fold_truncated": true | false,     // sequential/first_deny only
+///   "resolved_by": "approval" | null
+/// }
+/// ```
 pub fn finalize(
     ctx_json: &str,
     verdict_json: &str,
     mode: &str,
-    input_identity: &str,
-    decided_by: i64,
+    options_json: &str,
 ) -> Result<String, FfiError> {
     let ctx: AgentContext = serde_json::from_str(ctx_json)
         .map_err(|e| err(HostError::ContextInvalid, format!("ctx: {e}")))?;
-    let v: crate::Verdict = serde_json::from_str(verdict_json)
+    let v: Verdict = serde_json::from_str(verdict_json)
         .map_err(|e| err(HostError::VerdictInvalid, format!("verdict: {e}")))?;
     let mode = match mode {
         "enforce" => EnforcementMode::Enforce,
         "evaluate_only" => EnforcementMode::EvaluateOnly,
         _ => return Err(err(HostError::ContextInvalid, format!("mode: {mode}"))),
     };
-    let decided = if decided_by < 0 {
-        None
-    } else {
-        Some(decided_by as u32)
+    let opts: Value = parse_json(options_json, "options")?;
+    let composition: CompositionConfig = serde_json::from_value(
+        opts.get("composition").cloned().unwrap_or(Value::Null),
+    )
+    .map_err(|e| err(HostError::ContextInvalid, format!("options.composition: {e}")))?;
+    let verdicts = match opts.get("verdicts") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(v) => serde_json::from_value(v.clone())
+            .map_err(|e| err(HostError::ContextInvalid, format!("options.verdicts: {e}")))?,
     };
-    let record = enforce_mod::finalize(&ctx, v, mode, input_identity, decided);
+    let opt_str = |k: &str| {
+        opts.get(k)
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    };
+    let meta = FinalizeMeta {
+        input_identity: opt_str("input_identity"),
+        identity_provider: opt_str("identity_provider"),
+        enforced_identity: opt_str("enforced_identity"),
+        decided_by: opts
+            .get("decided_by")
+            .and_then(Value::as_u64)
+            .map(|d| d as u32),
+        composition,
+        verdicts,
+        fold_truncated: opts.get("fold_truncated").and_then(Value::as_bool),
+        resolved_by: match opts.get("resolved_by").and_then(Value::as_str) {
+            Some("approval") => Some("approval"),
+            _ => None,
+        },
+    };
+    let record = enforce_mod::finalize(&ctx, v, mode, meta);
     Ok(serde_json::to_string(&record).expect("record serialize"))
 }
 
@@ -180,4 +313,149 @@ pub fn ctk_assert(
         .map_err(|e| err(HostError::ContextInvalid, format!("run_record: {e}")))?;
     let out = crate::ctk_engine::assert_vector(&vector, &recorded, &rr);
     Ok(serde_json::to_string(&out).expect("result serialize"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn compose_aggregate_strictest_winner() {
+        let out = compose_aggregate(
+            r#"{"profile": "parallel/strictest"}"#,
+            &json!([
+                {"decision": "allow"},
+                {"decision": "deny", "reason": "nope"},
+                {"decision": "deny", "approval": {}}
+            ])
+            .to_string(),
+        )
+        .unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["decided_by"], 1); // plain deny dominates liftable
+        assert_eq!(v["consult"], false);
+        assert_eq!(v["combined"]["decision"], "deny");
+        assert_eq!(v["verdicts"].as_array().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn compose_aggregate_liftable_consult() {
+        let out = compose_aggregate(
+            r#"{"profile": "parallel/strictest"}"#,
+            &json!([{"decision": "allow"}, {"decision": "deny", "approval": {}}]).to_string(),
+        )
+        .unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["consult"], true);
+        assert_eq!(v["decided_by"], 1);
+    }
+
+    #[test]
+    fn compose_aggregate_transform_conflict() {
+        let t = json!({"decision": "transform", "transform": {"path": "$target.x", "value": 1}});
+        let out = compose_aggregate(
+            r#"{"profile": "parallel/strictest", "on_transform_conflict": "deny"}"#,
+            &json!([t, t]).to_string(),
+        )
+        .unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["combined"]["reason"], "host_error:transform_conflict");
+        assert_eq!(v["consult"], false);
+
+        let out = compose_aggregate(
+            r#"{"profile": "parallel/strictest", "on_transform_conflict": "approval"}"#,
+            &json!([t, t]).to_string(),
+        )
+        .unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["consult"], true);
+    }
+
+    #[test]
+    fn compose_aggregate_unanimous() {
+        let out = compose_aggregate(
+            r#"{"profile": "parallel/unanimous", "on_disagreement": "deny"}"#,
+            &json!([{"decision": "allow"}, {"decision": "transform",
+                     "transform": {"path": "$target.x", "value": 1}}])
+            .to_string(),
+        )
+        .unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(
+            v["combined"]["reason"],
+            "host_error:composition_disagreement"
+        );
+        // Unanimous allow:
+        let out = compose_aggregate(
+            r#"{"profile": "parallel/unanimous", "on_disagreement": "deny"}"#,
+            &json!([{"decision": "allow"}, {"decision": "allow", "result_labels": ["l"]}])
+                .to_string(),
+        )
+        .unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["combined"]["decision"], "allow");
+        assert_eq!(v["combined"]["result_labels"], json!(["l"]));
+    }
+
+    #[test]
+    fn compose_aggregate_parallel_single_transform_flagged() {
+        let out = compose_aggregate(
+            r#"{"profile": "parallel/strictest"}"#,
+            &json!([{"decision": "allow"},
+                    {"decision": "transform", "transform": {"path": "$target.x", "value": 1}}])
+            .to_string(),
+        )
+        .unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["apply_transform"], true);
+        assert_eq!(v["decided_by"], 1);
+    }
+
+    #[test]
+    fn finalize_options_shape() {
+        let ctx = json!({
+            "spec": "agent-hooks/0.1", "interception_point": "input",
+            "timestamp": "t", "sequence": 0,
+            "agent": {"id": "a", "framework": "x"}, "session": {"id": "s"},
+            "target": {"content": "hi", "role": "user"},
+            "input": {"content": "hi", "role": "user"}
+        })
+        .to_string();
+        let input_id = context_identity(&ctx).unwrap();
+        let out = finalize(
+            &ctx,
+            r#"{"decision": "allow"}"#,
+            "enforce",
+            &json!({
+                "input_identity": input_id,
+                "identity_provider": "jcs-sha256",
+                "decided_by": null,
+                "composition": {"profile": "sequential/first_deny", "on_approval": "stop"},
+                "fold_truncated": false
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let r: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(r["input_identity"], r["enforced_identity"]);
+        assert_eq!(r["identity_provider"], "jcs-sha256");
+        assert_eq!(r["composition"]["profile"], "sequential/first_deny");
+        assert_eq!(r["fold_truncated"], false);
+    }
+
+    #[test]
+    fn context_identity_rejects_big_int() {
+        let ctx = json!({
+            "spec": "agent-hooks/0.1", "interception_point": "pre_tool_call",
+            "timestamp": "t", "sequence": 0,
+            "agent": {"id": "a", "framework": "x"}, "session": {"id": "s"},
+            "target": {"id": 9007199254740993_i64},
+            "tool_call": {"id": "tc", "name": "t", "args": {"id": 9007199254740993_i64}}
+        })
+        .to_string();
+        let (code, detail) = context_identity(&ctx).unwrap_err();
+        assert_eq!(code, "host_error:context_invalid");
+        assert!(detail.contains("string-encode"), "{detail}");
+    }
 }

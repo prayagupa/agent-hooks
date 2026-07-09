@@ -2,11 +2,11 @@
 // Licensed under the MIT License.
 //! `AgentContext` construction (§4) for Rust-native hosts.
 //!
-//! Stateful per-session builder that owns the L0 envelope
+//! Stateful per-session builder that owns the required-core envelope
 //! (agent/session/sequence) and exposes one method per interception
-//! point that fills L1 and sets `target`. Optional L2 data is added by
-//! inserting into the returned map before emitting, or session-wide via
-//! [`AgentContextBuilder::with_l2`].
+//! point that fills the conditional fields and sets `target`. Optional
+//! data is added by inserting into the returned map before emitting, or
+//! session-wide via [`AgentContextBuilder::with_optional`].
 
 use crate::types::{AgentContext, InterceptionPoint, SPEC_VERSION};
 use serde_json::{json, Map, Value};
@@ -51,7 +51,7 @@ pub struct AgentContextBuilder {
     agent: Map<String, Value>,
     session: Map<String, Value>,
     seq: u64,
-    l2: Map<String, Value>,
+    optional: Map<String, Value>,
     now: TimestampFn,
 }
 
@@ -66,7 +66,7 @@ impl AgentContextBuilder {
             agent,
             session,
             seq: 0,
-            l2: Map::new(),
+            optional: Map::new(),
             now: Box::new(rfc3339_now),
         }
     }
@@ -80,10 +80,10 @@ impl AgentContextBuilder {
         self
     }
 
-    /// Attach an L2 field (`trace`, `tenant`, `budgets`, …) to every
-    /// subsequent context.
-    pub fn with_l2(&mut self, key: &str, value: Value) -> &mut Self {
-        self.l2.insert(key.to_owned(), value);
+    /// Attach a well-known optional field (`trace`, `tenant`,
+    /// `budgets`, …, §4.5) to every subsequent context.
+    pub fn with_optional(&mut self, key: &str, value: Value) -> &mut Self {
+        self.optional.insert(key.to_owned(), value);
         self
     }
 
@@ -96,14 +96,14 @@ impl AgentContextBuilder {
         ctx.insert("agent".into(), Value::Object(self.agent.clone()));
         ctx.insert("session".into(), Value::Object(self.session.clone()));
         ctx.insert("target".into(), target);
-        for (k, v) in &self.l2 {
+        for (k, v) in &self.optional {
             ctx.insert(k.clone(), v.clone());
         }
         self.seq += 1;
         ctx
     }
 
-    // ---- per-point L1 builders ---------------------------------------------
+    // ---- per-point conditional-field builders ------------------------------
 
     pub fn agent_startup(&mut self, tools_registered: Vec<String>) -> AgentContext {
         let init = json!({ "tools_registered": tools_registered });
@@ -201,7 +201,7 @@ mod tests {
     }
 
     #[test]
-    fn sequence_monotonic_and_l0_complete() {
+    fn sequence_monotonic_and_required_complete() {
         let mut b = AgentContextBuilder::new("a", "test", "s")
             .with_timestamp_provider(|| "2026-01-01T00:00:00.000Z".into());
         let c0 = b.agent_startup(vec!["t".into()]);
