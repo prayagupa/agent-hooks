@@ -2,7 +2,7 @@
   "$id": "https://agent-hooks.responsibleai.dev/v0.1/agent-context.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Agent Hooks — agent context",
-  "description": "Payload a host constructs at each interception point (AGENT-HOOKS-0.1 §4). L0 fields are always required; L1 fields are required conditionally on interception_point; L2 fields are optional; L3 lives under extensions.",
+  "description": "Payload a host constructs at each interception point (AGENT-HOOKS-0.1 §4). required fields are always present; conditional fields are required per interception_point; optional fields are well-known; namespaced extensions live under extensions.",
   "type": "object",
   "required": ["spec", "interception_point", "timestamp", "sequence", "agent", "session", "target"],
   "properties": {

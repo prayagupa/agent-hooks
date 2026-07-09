@@ -1,6 +1,6 @@
 # Agent Hooks Specification — Version 0.1
 
-> **Status:** Draft · **Version:** `0.1.0-alpha` · **Date:** 2026-06-19
+> **Status:** Draft · **Version:** `0.1.0-alpha` · **Date:** 2026-07-09
 > **Editors:** Responsible AI / Agent Governance Toolkit
 >
 > This document defines a framework-neutral contract for **lifecycle hooks** in
@@ -20,10 +20,10 @@
 4. [Agent context](#4-agent-context)
 5. [Verdict](#5-verdict)
 6. [Host obligations](#6-host-obligations)
-7. [Interceptor contract](#7-interceptor-contract)
+7. [Interceptor contract and composition](#7-interceptor-contract-and-composition)
 8. [Enforcement mode](#8-enforcement-mode)
 9. [Approval seam](#9-approval-seam)
-10. [Canonical serialization and action identity](#10-canonical-serialization-and-action-identity)
+10. [Context identity and the interception record](#10-context-identity-and-the-interception-record)
 11. [Reserved reasons](#11-reserved-reasons)
 12. [Streaming and parallel tool calls](#12-streaming-and-parallel-tool-calls)
 13. [Conformance](#13-conformance)
@@ -48,6 +48,8 @@ lifecycle points by returning a verdict the host MUST act on). It defines:
 - the **`AgentContext`** JSON payload a host MUST construct at each interception point,
 - the **`Verdict`** JSON payload an interceptor MUST return,
 - the **obligations** a host MUST honour for each verdict decision,
+- the closed set of **composition profiles** by which a host combines the
+  verdicts of multiple interceptors (§7),
 - a capability-scoped **conformance** model and a language-agnostic
   **Conformance Test Kit** (CTK).
 
@@ -80,8 +82,13 @@ capitals.
   reach a registered interceptor, or receives an invalid `Verdict` MUST treat the
   outcome as `deny` with a `host_error:*` reason per §11.
 - **No silent bypass.** A host MUST NOT execute the action guarded by an
-  interception point without first invoking every registered interceptor
-  for that point and honouring the resulting verdict per §6.
+  interception point without first invoking every interceptor its declared
+  composition profile (§7.2) requires for that point and honouring the
+  combined verdict per §6.
+- **Fail closed by construction.** An escalation is not a distinct decision
+  waiting on the host to remember not to proceed: it is a `deny` carrying an
+  `approval` block (§5.1). Unless the approval seam (§9) lifts it, nothing
+  proceeds — there is no unresolved intermediate state.
 
 ### 1.4 Trust model and non-goals
 
@@ -128,10 +135,16 @@ not a security certification.
 | **Interception point** | One of the eight named lifecycle positions in §3. |
 | **Agent context** | The JSON payload the host constructs at an interception point per §4. |
 | **Target** | The JSON value within the agent context that the guarded action will consume or has produced. The value a `transform` verdict rewrites. |
-| **Verdict** | The JSON payload an interceptor returns per §5. |
+| **Verdict** | The JSON payload an interceptor returns per §5. One of `allow`, `deny`, `transform`. |
 | **Action** | The host operation immediately following a `pre_*` interception point or immediately preceding a `post_*` interception point (a model call, a tool invocation, emitting output). |
-| **Permit verdict** | A verdict whose `decision` is `allow`, `warn`, or `transform`. |
-| **Block verdict** | A verdict whose `decision` is `deny` or `escalate`. |
+| **Permit verdict** | A verdict whose `decision` is `allow` or `transform`. |
+| **Block verdict** | A verdict whose `decision` is `deny` (with or without an `approval` block). |
+| **Liftable deny** | A `deny` verdict carrying an `approval` block (§5.1): denied as-is, unless the approval seam resolves to a permit. |
+| **Composition profile** | The host-declared rule set (§7.2) for how the verdicts of multiple interceptors combine into one combined verdict at one emission. |
+| **Combined verdict** | The single verdict that results from composing all interceptor verdicts (and any approval resolution) at one emission; the verdict §6 obligations apply to. |
+| **Severity** | The total order on verdicts used by aggregation (§7.3): `deny` > liftable deny > `transform` > `allow`. |
+| **Identity provider** | The host-declared function that maps an agent context to its `context_identity` string (§10.1). |
+| **Emission** | One invocation of the interception machinery at one interception point: context construction, interceptor dispatch per the profile, and record production. |
 | **CTK** | The Conformance Test Kit defined in §13 and shipped under `conformance/`. |
 
 ---
@@ -191,17 +204,17 @@ capabilities to the CTK per §13.2 and MUST still emit `agent_startup`, `input`,
 
 [Pure Specification]
 
-A `AgentContext` is a JSON object. Its schema is tiered:
+A `AgentContext` is a JSON object. Its schema has four field tiers:
 
-- **L0** fields are REQUIRED at every interception point.
-- **L1** fields are REQUIRED at the specific interception point(s) listed.
-- **L2** fields are well-known and OPTIONAL.
-- **L3** fields are namespaced extensions under `extensions.<namespace>`.
+- **required** fields are REQUIRED at every interception point.
+- **conditional** fields are REQUIRED at the specific interception point(s) listed.
+- **optional** fields are well-known and OPTIONAL.
+- **namespaced** fields are extensions under `extensions.<namespace>`.
 
 The machine-readable schema is `spec/schema/agent-context.schema.json` with
 per-point closed schemas at `spec/schema/agent-context/<interception_point>.schema.json`.
 
-### 4.1 L0 — required core
+### 4.1 Required core
 
 ```jsonc
 {
@@ -226,10 +239,10 @@ per-point closed schemas at `spec/schema/agent-context/<interception_point>.sche
 | `session.id` | string | Stable identifier for the run/conversation. MUST be stable across all hooks in one session. |
 | `target` | any | The value-under-evaluation per §4.3. The root that `$target` in a `transform.path` resolves against. |
 
-### 4.2 L1 — per-interception-point required fields
+### 4.2 Conditional — per-interception-point required fields
 
 A host MUST populate the following fields at the indicated interception point in
-addition to L0. `target` MUST be set to the indicated value.
+addition to the required core. `target` MUST be set to the indicated value.
 
 #### `agent_startup`
 
@@ -336,7 +349,29 @@ subsequent action.
 A `transform` verdict at `agent_startup` or `agent_shutdown` MUST be rejected
 by the host with `host_error:transform_target_forbidden` per §11.
 
-### 4.4 L2 — well-known optional fields
+### 4.4 Value domain
+
+[Pure Specification]
+
+Contexts cross language boundaries as JSON. Hosts:
+
+- MUST NOT place non-finite floating-point values (NaN, ±Infinity) or
+  lone Unicode surrogates in any context field. These are not
+  representable in interoperable JSON ([RFC 7493]); SDK marshalling
+  layers reject them fail-closed (`host_error:context_invalid`) rather
+  than letting per-language encoders corrupt them silently.
+- SHOULD encode integer identifiers that may exceed ±(2⁵³−1) — 64-bit
+  database keys, snowflake IDs — as decimal **strings** at the adapter
+  boundary (the proto3 JSON convention). Rationale: a JavaScript
+  interceptor observes such integers already rounded by `JSON.parse`,
+  so the value evaluated can differ from the value the tool executes;
+  and the default identity provider (§10.1) rejects them.
+
+Neither the core nor any SDK normalizes values. A value is either
+accepted as supplied or rejected with an actionable message; nothing is
+silently rewritten.
+
+### 4.5 Optional — well-known fields
 
 A host SHOULD populate the following fields when the underlying framework
 exposes the data. Absence is conformant.
@@ -358,7 +393,7 @@ exposes the data. Absence is conformant.
 | `actor.id`, `actor.kind` | all | string, `human`\|`service`\|`agent` |
 | `budgets.tool_call_count`, `.token_count`, `.elapsed_seconds`, `.cost_usd` | all | number |
 
-### 4.5 L3 — extensions
+### 4.6 Namespaced — extensions
 
 ```jsonc
 {
@@ -384,9 +419,11 @@ An interceptor MUST return a JSON object conforming to
 
 ```jsonc
 {
-  "decision": "allow" | "deny" | "warn" | "escalate" | "transform",
+  "decision": "allow" | "deny" | "transform",
   "reason": "string",
   "message": "string",
+  "warnings": [ { "reason": "string", "message": "string" }, ... ],
+  "approval": { },
   "transform": { "path": "$target...", "value": <any> },
   "evidence": { "artefact": "string", "verification_pointers": { "<k>": "uri" } },
   "result_labels": ["string", ...]
@@ -395,17 +432,20 @@ An interceptor MUST return a JSON object conforming to
 
 | Member | Required | Constraint |
 | --- | --- | --- |
-| `decision` | yes | One of the five values above. |
+| `decision` | yes | One of the three values above. |
 | `reason` | no | MUST NOT start with `host_error:`. Free-form machine identifier. |
 | `message` | no | Free-form human-readable text. |
+| `warnings` | no | Array of `{reason?, message?}` objects. Permitted on any decision. See §5.1. |
+| `approval` | no; only valid when `decision == "deny"` | JSON object (MAY be empty). Marks the deny as liftable by the approval seam (§9). MUST be absent for `allow` and `transform`. |
 | `transform` | iff `decision == "transform"` | See §5.2. MUST be absent for all other decisions. |
 | `evidence` | no | See §5.3. Serialized size MUST NOT exceed 4096 bytes. |
 | `result_labels` | no | Array of strings. See §5.4. |
 
 A host that receives a verdict that is not a JSON object, whose `decision` is
 absent or invalid, whose `reason` starts with `host_error:`, whose `transform`
-presence violates the constraint above, whose `evidence` is not an object, or
-whose `result_labels` is not an array of strings MUST treat it as
+or `approval` presence violates the constraints above, whose `warnings` is not
+an array of objects, whose `evidence` is not an object, or whose
+`result_labels` is not an array of strings MUST treat it as
 `{"decision": "deny", "reason": "host_error:verdict_invalid"}`.
 
 ### 5.1 Decision semantics
@@ -413,10 +453,33 @@ whose `result_labels` is not an array of strings MUST treat it as
 | Decision | Class | Semantics |
 | --- | --- | --- |
 | `allow` | permit | The action proceeds with `target` unchanged. |
-| `warn` | permit | The action proceeds with `target` unchanged. The host SHOULD record `reason`/`message` as a warning. |
 | `transform` | permit | The action proceeds with `target` rewritten per §5.2. |
 | `deny` | block | The action MUST NOT proceed. |
-| `escalate` | block | The action MUST NOT proceed until the approval seam (§9) resolves to a permit verdict. |
+| `deny` + `approval` | block (liftable) | The action MUST NOT proceed **unless** the approval seam (§9), consulted per the composition profile (§7), resolves to a permit verdict. A host with no registered resolver enforces the deny as-is; that is conformant behaviour, not an error. |
+
+**Warnings.** A warning is a recorded concern that does not affect
+control flow. A host MUST record `warnings` on the interception record
+(§10.3) and SHOULD surface them to its own logging. There is no
+separate `warn` decision: what earlier drafts expressed as `warn` is
+`allow` with a `warnings` entry. SDKs provide `Verdict.warn(...)` as
+constructor sugar for exactly that shape.
+
+**Escalation.** There is no separate `escalate` decision: an
+escalation is a `deny` with an `approval` block — denied as-is, unless
+approved. This makes fail-closed a property of the type: an unconsumed
+or unresolved escalation *is* a deny, with no host obligation needed to
+keep it from proceeding. SDKs provide `Verdict.escalate(...)` as
+constructor sugar for a deny with an empty `approval` block.
+
+**Severity.** Aggregation (§7.3) uses this total order, fixed by this
+specification and not host-configurable:
+
+```
+deny  >  deny+approval  >  transform  >  allow
+```
+
+A plain deny dominates a liftable one: if any interceptor
+unconditionally denies, consulting an approver is pointless.
 
 ### 5.2 Transform
 
@@ -452,7 +515,7 @@ host MUST persist `result_labels` alongside the data the interception point's `t
 produced (a tool result, a model output, a final output) and SHOULD resurface
 them as `extensions.<interceptor-namespace>.source_labels` on later hooks whose
 `target` derives from that data. A host MUST NOT persist `result_labels` for an
-action that did not proceed (a `deny`, or an `escalate` not approved).
+action that did not proceed (a `deny` that was not lifted).
 
 ---
 
@@ -460,20 +523,19 @@ action that did not proceed (a `deny`, or an `escalate` not approved).
 
 [Pure Specification]
 
-For each interception point, after obtaining a verdict in `enforce` mode (§8):
+For each emission, after obtaining the **combined verdict** (§7) in `enforce`
+mode (§8):
 
-| Verdict | Host MUST |
+| Combined verdict | Host MUST |
 | --- | --- |
-| `allow` | Proceed with the action using `target` unchanged. |
-| `warn` | Proceed with the action using `target` unchanged. Record the warning. |
-| `transform` | Apply the transform to `target` per §5.2, then proceed with the action using the transformed value. |
-| `deny` | NOT proceed with the action. At `pre_*` hooks the guarded call MUST NOT be dispatched. At `input` the turn MUST NOT begin. At `output` the response MUST NOT be returned to the caller. |
-| `escalate` | NOT proceed with the action until the approval seam (§9) returns a permit verdict. If approval returns `deny`, treat as `deny`. |
+| `allow` | Proceed with the action using `target` unchanged. Record any warnings. |
+| `transform` | Apply the transform to `target` per §5.2 (if not already applied during sequential fold-through, §7.4), then proceed with the action using the transformed value. |
+| `deny` | NOT proceed with the action. At `pre_*` hooks the guarded call MUST NOT be dispatched. At `input` the turn MUST NOT begin. At `output` the response MUST NOT be returned to the caller. This applies equally to a liftable deny that the approval seam did not lift (rejected, unresolved, or never consulted). |
 
 ### 6.1 Post-action block semantics
 
 At `post_model_call` and `post_tool_call` the action has already executed. A
-`deny` or unresolved `escalate` at these points means the host MUST NOT
+`deny` (lifted or not, per §7) at these points means the host MUST NOT
 incorporate the result into subsequent agent state: the model response or tool
 result MUST be discarded as if it had errored, and the host MUST NOT
 re-execute the action.
@@ -483,7 +545,7 @@ re-execute the action.
 `agent_startup` and `agent_shutdown` have no bracketed action, so block
 verdicts there need their own rules:
 
-- A `deny` or `escalate` at `agent_startup` means the session MUST NOT
+- A combined `deny` at `agent_startup` means the session MUST NOT
   process any input: no `input`, model, tool, or `output` interception
   point may be emitted afterwards. The host MUST still emit
   `agent_shutdown` (with `summary.reason` = `error`) so the session's
@@ -491,12 +553,12 @@ verdicts there need their own rules:
 - At `agent_shutdown` there is nothing left to prevent. A block verdict
   is recorded (the fail-closed audit trail is preserved) but imposes no
   further obligation; the host MUST NOT re-execute anything and MUST
-  NOT consult the approval seam (§9) for an `escalate` returned at
+  NOT consult the approval seam (§9) for a liftable deny returned at
   `agent_shutdown` — there is no action to approve.
 
 ### 6.2 Block propagation
 
-When a `pre_*` interception point yields a block verdict, the host MUST NOT emit the
+When a `pre_*` interception point yields a combined block verdict, the host MUST NOT emit the
 corresponding `post_*` interception point for that action. The host MUST continue the agent
 loop as if the action had failed (e.g., surface a tool error to the model)
 unless the host's own semantics terminate the turn.
@@ -511,54 +573,199 @@ value MUST treat the verdict as `deny` with `host_error:interceptor_failed` or
 
 ---
 
-## 7. Interceptor contract
+## 7. Interceptor contract and composition
 
 [Pure Specification]
 
 An interceptor is a callable `intercept(context: AgentContext) -> Verdict`. A host:
 
-- MUST invoke registered interceptors sequentially, in registration
-  order, with respect to the guarded action (the action MUST NOT begin
-  until every invoked interceptor has returned and the fold in §7.1 is
-  complete).
+- MUST NOT begin the guarded action until composition (per the declared
+  profile, §7.2) is complete and the combined verdict permits it.
 - MUST pass each interceptor its own copy of the context; an
   interceptor's in-place mutation of the object it received MUST NOT
   affect enforcement, identity computation, or later interceptors.
 - MUST, in `enforce` mode with zero registered interceptors, treat every
   emission as `deny` with reason `host_error:no_interceptor` (§11). A
   deliberate passthrough is expressed by registering an explicit
-  allow-all interceptor.
+  allow-all interceptor. This rule is profile-independent.
 - SHOULD bound interceptor execution with a configurable timeout
   (RECOMMENDED default: 5000 ms) and apply §6.3 on breach.
 
-### 7.1 Sequential fold-through
+### 7.1 Composition is host configuration
 
-[Pure Specification]
+How multiple interceptors compose at one emission is a **host
+configuration choice**, never something a returned verdict can
+influence. A verdict carries the interceptor's decision content only;
+the host declares — before dispatch — which profile governs execution
+and aggregation. The profile in effect MUST be recorded on every
+interception record (§10.3) so records are interpretable without
+out-of-band knowledge of host configuration.
 
-Interceptors compose by folding transforms through the dispatch order:
+### 7.2 Composition profiles
 
-1. Invoke interceptors in registration order.
-2. The first block verdict (`deny` or `escalate`) short-circuits:
-   remaining interceptors are NOT invoked and it becomes the combined
-   verdict.
-3. When an interceptor returns `transform` in `enforce` mode, the host
-   MUST apply it to `target` (per §5.2, including the §4.3 write-back)
-   **before** invoking the next interceptor, so each interceptor
-   observes the context as already transformed by its predecessors. In
-   `evaluate_only` mode the transform is validated but not applied
-   (§8), so later interceptors observe the untransformed context.
-4. A transform that fails to apply (§5.2) becomes a `deny` with the
-   corresponding `host_error:*` reason and short-circuits.
-5. If no block occurred, the combined verdict recorded is the last
-   `transform` returned; otherwise `warn` if any interceptor returned
-   `warn`; otherwise `allow`. The combined verdict's `result_labels`
-   is the first-seen-ordered union of the labels returned by every
-   permit verdict in the fold (§5.4 labels from superseded verdicts
-   are not discarded). Labels are dropped when the emission does not
-   proceed, per §5.4. `input_identity` is computed before step
-   1 and `enforced_identity` after the fold (§10.2), so the record
-   captures the cumulative effect regardless of which single verdict is
-   recorded.
+The profile set is **closed**: a host MUST NOT invent profiles or
+deviate from the semantics below. A host declares which profiles it
+supports (per session or per interception point) and MAY expose the
+choice to its operator. No profile is mandatory; conformance (§13) is
+assessed against exactly the profiles a host declares.
+
+| Profile | Mode | Summary |
+| --- | --- | --- |
+| `sequential/first_deny` | sequential | Fold-through; first deny short-circuits. Knob: `on_approval: "stop" \| "resume"`. |
+| `sequential/run_all` | sequential | Fold-through; nothing short-circuits; severity-max aggregate. |
+| `parallel/strictest` | parallel | Snapshot isolation; severity-max aggregate. |
+| `parallel/unanimous` | parallel | Snapshot isolation; anything but unanimous `allow` is a disagreement. Knob: `on_disagreement: "deny" \| "approval"`. |
+
+Knobs for parallel-mode transform conflicts:
+`on_transform_conflict: "deny" | "approval"` (§7.5).
+
+**"Parallel" names isolation semantics, not scheduling.** In a parallel
+profile every interceptor receives its own copy of the **same,
+untransformed** context snapshot; no interceptor observes another's
+transform. A host MAY dispatch the interceptors concurrently or
+serially — the observable semantics are identical, and the CTK cannot
+and does not distinguish them.
+
+Two rejected policies are documented for the record and MUST NOT be
+implemented under this version:
+
+- *Quorum (k-of-n allow)*: configuration surface for a weak security
+  story — n−k controls silently overridden.
+- *Most-permissive-wins*: one permissive interceptor silently bypasses
+  every other control, violating the no-silent-bypass invariant (§1.3).
+  Advisory interceptors are what `warnings` and `result_labels` are for.
+
+### 7.3 Aggregation
+
+Aggregation selects **one winning verdict** and unions the metadata:
+
+1. The winner is the highest-severity verdict per the §5.1 order.
+   Ties between block verdicts resolve to the lowest registration
+   index (that index becomes `decided_by`, §10.3). Ties between
+   transforms are a conflict (§7.5).
+2. The combined verdict is the winner (or the approval resolution that
+   substitutes for it, §7.6), with:
+   - `warnings`: the first-seen-ordered union of `warnings` from
+     **every** verdict returned in the emission;
+   - `result_labels`: the first-seen-ordered union of labels from every
+     **permit** verdict returned in the emission (labels are dropped
+     entirely when the emission does not proceed, per §5.4).
+3. Losing verdicts impose no obligations, but every returned verdict is
+   summarized on the record (§10.3) in multi-verdict profiles.
+
+### 7.4 Sequential profiles
+
+Interceptors are invoked in registration order. When an interceptor
+returns `transform` in `enforce` mode, the host MUST apply it to
+`target` (per §5.2, including the §4.3 write-back) **before** invoking
+the next interceptor, so each interceptor observes the context as
+already transformed by its predecessors. In `evaluate_only` mode the
+transform is validated but not applied (§8), so later interceptors
+observe the untransformed context. A transform that fails to apply
+(§5.2) becomes a `deny` with the corresponding `host_error:*` reason
+and — in both sequential profiles — short-circuits.
+
+**`sequential/first_deny`.** The first `deny` (liftable or not)
+short-circuits: remaining interceptors are NOT invoked. If the deny is
+liftable and a resolver is registered, the host consults the approval
+seam (§9). Then, per the `on_approval` knob:
+
+- `"stop"`: a permit resolution becomes the combined verdict and the
+  emission ends — interceptors after the denying one are never
+  invoked. The record MUST set `fold_truncated: true` (interceptors
+  were skipped) and `resolved_by: "approval"`, so the truncation is
+  never silent.
+- `"resume"`: a permit resolution substitutes for the denying
+  interceptor's verdict (an `allow` continues with the context
+  unchanged; a `transform` is applied per §7.4) and the fold continues
+  with the next interceptor. Each subsequently encountered liftable
+  deny MAY be consulted in turn (consultations are bounded by the
+  number of registered interceptors). The record sets
+  `resolved_by: "approval"`; `fold_truncated` is `true` only if the
+  emission still ended before every interceptor ran (e.g., a later
+  plain deny).
+
+A rejected or unresolved resolution leaves the deny standing as the
+combined verdict in either knob position.
+
+If no interceptor returned `deny`, the combined verdict is the last
+`transform` returned, or `allow` — with metadata unioned per §7.3.
+
+**`sequential/run_all`.** Every interceptor runs, in order, regardless
+of intermediate verdicts; transforms fold through for visibility
+exactly as above. The combined verdict is the severity-max aggregate
+(§7.3). Two consequences the record makes legible:
+
+- Interceptors after a decisive deny still run and evaluate content
+  that will never execute; their verdicts appear in the record's
+  `verdicts` summary.
+- On a combined deny, folded transforms are discarded — nothing
+  proceeds, so nothing was transformed for enforcement purposes
+  (`enforced_identity` still reflects the folded context, preserving
+  the audit trail of what interceptors observed).
+
+Approval in `run_all`: the seam is consulted **at most once per
+emission**, and only when the aggregate winner is a liftable deny and
+**every** deny returned in the emission carries an `approval` block (a
+single plain deny makes lifting pointless — severity already decided).
+A permit resolution lifts the entire deny set and becomes the combined
+verdict (an `allow` proceeds with the folded context; a `transform` is
+applied on top of it). A rejected or unresolved resolution leaves the
+aggregate deny standing.
+
+### 7.5 Parallel profiles
+
+Every interceptor receives an isolated copy of the same untransformed
+snapshot. No transform is applied during dispatch; there is no fold.
+
+**`parallel/strictest`.** The combined verdict is the severity-max
+aggregate (§7.3). If the winner is a `transform`:
+
+- Exactly one interceptor returned `transform` → the host applies it
+  (§5.2) and proceeds.
+- Two or more returned `transform` → **conflict**: transforms produced
+  against the same snapshot do not compose (neither transformer saw
+  the other's output, and application order would be arbitrary). Per
+  `on_transform_conflict`:
+  - `"deny"`: the combined verdict is
+    `{"decision": "deny", "reason": "host_error:transform_conflict"}`.
+  - `"approval"`: the host synthesizes a liftable deny with reason
+    `host_error:transform_conflict` and consults the seam (§9); the
+    resolver (typically a human) MAY resolve the conflict by returning
+    a `transform` of its own, or an `allow`, or reject.
+
+If the winner is a liftable deny (and no plain deny was returned), the
+host consults the seam at most once; a permit resolution becomes the
+combined verdict. Lower-severity transforms returned by other
+interceptors are NOT applied — they lost the aggregation; they appear
+in the record's `verdicts` summary.
+
+**`parallel/unanimous`.** The combined verdict is `allow` (with
+metadata unioned per §7.3) iff **every** interceptor returned `allow`.
+Any other outcome — any deny or any transform — is a **disagreement**.
+Per `on_disagreement`:
+
+- `"deny"`: the combined verdict is
+  `{"decision": "deny", "reason": "host_error:composition_disagreement"}`.
+- `"approval"`: the host synthesizes a liftable deny with reason
+  `host_error:composition_disagreement` and consults the seam; the
+  resolution (a verdict) becomes the combined verdict on permit.
+
+A host wanting transforms to participate in aggregation uses
+`parallel/strictest`; `unanimous` is deliberately strict.
+
+### 7.6 Approval substitution
+
+Whenever a profile consults the approval seam and receives a permit
+resolution, that resolution's verdict — expressed in the same
+three-verdict vocabulary (§9) — **substitutes** for the verdict (or
+synthesized verdict) that triggered the consultation, at that
+verdict's position in the profile's semantics. `decided_by` (§10.3)
+remains the index of the interceptor whose liftable deny was consulted
+(or `null` for a synthesized one); `resolved_by: "approval"` records
+the substitution.
+
+---
 
 ## 8. Enforcement mode
 
@@ -568,8 +775,8 @@ A host MUST support two modes, selected per session or per interception point:
 
 | Mode | Behaviour |
 | --- | --- |
-| `enforce` | The host honours verdicts per §6. |
-| `evaluate_only` | The host invokes interceptors and records verdicts but proceeds with every action as if the verdict were `allow`. The host MUST validate `transform` per §5.2 but MUST NOT apply it. The host MUST NOT present an `evaluate_only` outcome as enforcement to any downstream system. |
+| `enforce` | The host honours combined verdicts per §6. |
+| `evaluate_only` | The host invokes interceptors per the declared profile and records verdicts but proceeds with every action as if the combined verdict were `allow`. The host MUST validate `transform` per §5.2 but MUST NOT apply it. The host MUST NOT consult the approval seam. The host MUST NOT present an `evaluate_only` outcome as enforcement to any downstream system. |
 
 ---
 
@@ -577,106 +784,191 @@ A host MUST support two modes, selected per session or per interception point:
 
 [Pure Specification]
 
-When a verdict is `escalate`, the host MUST consult a registered
-**approval resolver** before the action proceeds.
+The approval seam is how a **liftable deny** (§5.1) may be lifted. The
+host consults a registered **approval resolver** exactly when the
+composition profile in effect says to (§7.4–§7.6), and never at
+`agent_shutdown` (§6.1a) or in `evaluate_only` mode (§8).
 
 ```jsonc
 // ApprovalRequest
 {
-  "context_identity": "sha256:<hex>",     // §10
+  "context_identity": "<string per §10.1>" | null,
   "interception_point": "<§3>",
-  "verdict": <the escalate Verdict>,
+  "verdict": <the liftable deny Verdict>,
   "context": <the AgentContext>            // MAY be redacted per host policy
 }
 
 // ApprovalResolution
 {
   "outcome": "approve" | "reject" | "unresolved",
-  "context_identity": "sha256:<hex>",     // MUST equal the request's
-  "verdict": <a permit or deny Verdict>   // present iff outcome != "unresolved"
+  "context_identity": "<string>" | null,   // MUST equal the request's (echo rule)
+  "verdict": <a permit or deny Verdict>    // present iff outcome != "unresolved"
 }
 ```
 
-- `approve` MUST carry a permit verdict (`allow`, `warn`, or `transform`). The
-  host applies §6 to that verdict.
-- `reject` MUST carry `{"decision": "deny", ...}`. The host applies §6.
+- `approve` MUST carry a permit verdict (`allow` or `transform`). It
+  substitutes per §7.6.
+- `reject` MUST carry `{"decision": "deny", ...}`. The triggering deny
+  (or the resolver's deny) stands as the combined verdict.
 - `unresolved` means the resolver could not decide. The host MUST treat it as
   `deny` with `host_error:approval_unresolved`.
-- A resolution whose `context_identity` differs from the request's MUST be
-  rejected with `host_error:approval_action_mismatch`.
-- A host with no registered resolver MUST treat `escalate` as `deny` with
-  `host_error:approval_resolver_missing`.
+- **Echo rule.** The resolution's `context_identity` MUST equal the
+  request's, byte for byte (`null` echoes as `null`). A mismatch MUST
+  be rejected with `host_error:approval_identity_mismatch`. This is
+  the only normative constraint on the identity value itself; how it
+  is computed is the identity provider's concern (§10.1).
+- A host with no registered resolver enforces the liftable deny as a
+  plain deny. This is conformant behaviour, not an error; the record
+  shows no resolution was obtained.
+- A resolver that raises or times out MUST yield
+  `deny` with `host_error:approval_resolver_failed`.
+
+The `context_identity` presented in the request is computed by the
+identity provider from the context **as presented to the resolver** —
+at consultation time, after any transforms that folded earlier in a
+sequential dispatch. Binding the approval to the identity of what was
+actually shown to the approver prevents an approval obtained for one
+content from being replayed against another (when the provider is
+content-derived, §10.1).
 
 ---
 
-## 10. Canonical serialization and action identity
+## 10. Context identity and the interception record
 
 [Pure Specification]
 
-### 10.1 Canonical JSON
+### 10.1 Identity provider
 
-A host MUST serialize per RFC 8785 (JSON Canonicalization Scheme):
-object members sorted by UTF-16 code units, numbers per ECMA-262
-`Number::toString`, minimal RFC 8259 string escapes, no insignificant
-whitespace. The canonical Rust core delegates to an RFC 8785
-implementation; every binding inherits it, and the golden vectors in
-`conformance/golden/identity.json` pin the exact bytes.
+`context_identity` is an **opaque string** produced by the host's
+declared **identity provider** — a pure function
+`AgentContext -> string`. This specification imposes exactly two rules
+on the value, both already stated where they apply:
 
-### 10.2 Context identity
+1. the **echo rule** (§9): the identity presented in an
+   ApprovalRequest returns unchanged in its resolution;
+2. the **record rule** (§10.3): the identities in effect (or explicit
+   `null`) and the provider's name appear on every record.
 
-`context_identity(ctx)` is `"sha256:" + lowercase_hex(SHA-256(canonical_json(ctx_L01)))`
-where `ctx_L01` is the **closed** L0+L1 projection of `ctx` for its
-interception point: exactly the fields marked required in the per-point
-schemas under `spec/schema/agent-context/`, including the nested
-subfield whitelists (`agent.{id,framework}`, `session.{id}`,
-`model.{id}`, `tool_call.{id,name,args}`, `tool_result.{value,is_error}`,
-`response.{content,tool_calls,finish_reason}`, `input.{content,role}`,
-`agent_init.{tools_registered}`, `output.{content}`,
-`summary.{reason}`). All other members — top-level L2/L3 and nested
-optional subfields such as `tool_result.duration_ms` or
-`tool_call.content_hash` — are excluded, so adding optional data never
-perturbs the identity.
+A host declares one of:
 
-A host MUST compute two identities per interception:
-
-| Identity | Definition |
+| `identity_provider` | Meaning |
 | --- | --- |
-| `input_identity` | `context_identity(ctx)` **before** interceptor dispatch (§7.1 step 1). |
-| `enforced_identity` | `context_identity(ctx)` after the §7.1 fold completes. Equal to `input_identity` when no transform was applied, and always equal in `evaluate_only` mode. |
+| `"jcs-sha256"` | The default provider defined in §10.2. Shipped by every SDK; in effect unless the host configures otherwise. |
+| `"<host-defined>"` (matching `^[a-z][a-z0-9_-]*$`, not starting with `jcs`) | A host-supplied function. The CTK verifies the echo and record rules against it; the golden identity vectors do not apply. |
+| `null` | No identity. Approvals bind only by request/response correlation; records carry `null` identities and self-describe as **unbound**. Permitted, but the record and any conformance claim (§13.3) MUST state it — honest absence over pretend presence. |
 
-Approval binding (§9) uses the identity of the context **as presented
-to the resolver** — computed at escalation time, after any transforms
-that folded earlier in the dispatch (§7.1). It equals `input_identity`
-when no prior transform occurred. The record carries `input_identity`
-and `enforced_identity` regardless. The record additionally carries
-`session_id`, `sequence`, and `decided_by` (the registration index of
-the deciding interceptor, or null) so records are totally ordered
-within a session and decisions are attributable — it remains
-payload-free.
+### 10.2 The `jcs-sha256` provider
+
+`context_identity(ctx)` is `"sha256:" + lowercase_hex(SHA-256(canonical_json(ctx_rc)))`
+where:
+
+- `canonical_json` is RFC 8785 (JSON Canonicalization Scheme):
+  object members sorted by UTF-16 code units, numbers per ECMA-262
+  `Number::toString`, minimal RFC 8259 string escapes, no
+  insignificant whitespace. The canonical Rust core delegates to an
+  RFC 8785 implementation; every binding inherits it, and the golden
+  vectors in `conformance/golden/identity.json` pin the exact bytes.
+- `ctx_rc` is the **closed** required+conditional projection of `ctx`
+  for its interception point: exactly the fields marked required in
+  the per-point schemas under `spec/schema/agent-context/`, including
+  the nested subfield whitelists (`agent.{id,framework}`,
+  `session.{id}`, `model.{id}`, `tool_call.{id,name,args}`,
+  `tool_result.{value,is_error}`,
+  `response.{content,tool_calls,finish_reason}`, `input.{content,role}`,
+  `agent_init.{tools_registered}`, `output.{content}`,
+  `summary.{reason}`). All other members — optional and namespaced
+  fields and nested optional subfields such as `tool_result.duration_ms`
+  or `tool_call.content_hash` — are excluded, so adding optional data
+  never perturbs the identity.
+
+**Input domain (fail closed, never normalize).** RFC 8785 defines
+canonical bytes only for I-JSON ([RFC 7493]) data. The provider MUST
+reject — as `deny` with `host_error:context_invalid` and a
+remediation-detail message (e.g., *"integer exceeds 2^53;
+string-encode 64-bit identifiers, see §4.4"*) — any context whose
+projection contains:
+
+- an integral number outside ±(2⁵³−1) (canonicalization would silently
+  round it, making the identity non-injective);
+- a non-finite number or a lone surrogate (not representable; in
+  practice these fail at the parse funnel before the provider runs,
+  and SDK marshalling guards reject them uniformly per §4.4).
+
+The provider never rewrites a value to make it canonicalizable.
+
+### 10.3 The interception record
+
+A host MUST produce one **InterceptionRecord** per emission. The record
+is payload-free (it carries no context or target content) and MUST
+contain:
+
+```jsonc
+{
+  "interception_point": "<§3>",
+  "mode": "enforce" | "evaluate_only",
+  "verdict": <the combined verdict, §7.3>,
+  "input_identity": "<string>" | null,
+  "enforced_identity": "<string>" | null,
+  "identity_provider": "jcs-sha256" | "<host-defined>" | null,
+  "session_id": "string",
+  "sequence": 0,
+  "decided_by": 0 | null,
+  "composition": {
+    "profile": "sequential/first_deny" | "sequential/run_all"
+             | "parallel/strictest" | "parallel/unanimous",
+    "on_approval": "stop" | "resume",              // sequential/first_deny only
+    "on_disagreement": "deny" | "approval",        // parallel/unanimous only
+    "on_transform_conflict": "deny" | "approval"   // parallel profiles only
+  },
+  "verdicts": [ { "index": 0, "decision": "allow", "reason": "string" }, ... ],
+  "fold_truncated": false,
+  "resolved_by": "approval" | null
+}
+```
+
+| Field | Definition |
+| --- | --- |
+| `input_identity` | Provider output on the context **before** dispatch. `null` iff `identity_provider` is `null`. |
+| `enforced_identity` | Provider output after composition completes (post-fold in sequential profiles). Equal to `input_identity` when no transform was applied, and always equal in `evaluate_only` mode. |
+| `identity_provider` | The declared provider (§10.1). |
+| `session_id`, `sequence` | Copied from the context; records are totally ordered within a session. |
+| `decided_by` | Registration index of the interceptor whose verdict won the aggregation (§7.3) or whose liftable deny was consulted (§7.6); `null` for a pure-allow combination or a host-synthesized verdict. |
+| `composition` | The profile and knobs in effect (§7.1). REQUIRED. |
+| `verdicts` | Payload-free per-interceptor summary `{index, decision, reason?}`. REQUIRED in multi-verdict profiles (`sequential/run_all`, `parallel/*`); OPTIONAL in `sequential/first_deny`. |
+| `fold_truncated` | `true` iff one or more registered interceptors were never invoked in this emission (short-circuit or approval-stop). Defined only for `sequential/first_deny`. |
+| `resolved_by` | `"approval"` iff an approval resolution substituted for a verdict in this emission (§7.6); else `null`/absent. |
+
+---
 
 ## 11. Reserved reasons
 
 [Pure Specification]
 
 A host MUST use the following `reason` values, and only these, when it
-synthesizes a `deny` verdict per §6.3, §5.2, or §9. An interceptor MUST NOT emit a
+synthesizes a `deny` verdict per §6.3, §5.2, §7.5, or §9. An interceptor MUST NOT emit a
 `reason` beginning with `host_error:`.
 
 | Reason | Cause |
 | --- | --- |
-| `host_error:context_invalid` | The host could not construct a schema-valid `AgentContext`. |
+| `host_error:context_invalid` | The host could not construct a schema-valid `AgentContext`, or the `jcs-sha256` provider rejected its value domain (§10.2). |
 | `host_error:interceptor_failed` | An interceptor raised or returned a non-JSON value. |
 | `host_error:interceptor_timeout` | An interceptor exceeded the host's timeout. |
 | `host_error:verdict_invalid` | An interceptor returned a value that fails §5 validation. |
 | `host_error:transform_invalid` | `transform.path` did not resolve or `value` could not be set. |
 | `host_error:transform_target_forbidden` | `transform.path` is not rooted at `$target`, or the interception point forbids transform. |
-| `host_error:approval_resolver_missing` | `escalate` with no registered resolver. |
+| `host_error:transform_conflict` | Two or more transforms against the same snapshot in a parallel profile (§7.5). |
+| `host_error:composition_disagreement` | Non-unanimous outcome under `parallel/unanimous` (§7.5). |
 | `host_error:approval_resolver_failed` | The resolver raised or timed out. |
 | `host_error:approval_unresolved` | The resolver returned `unresolved`. |
-| `host_error:approval_action_mismatch` | The resolver's `context_identity` did not match. |
+| `host_error:approval_identity_mismatch` | The resolution's `context_identity` violated the echo rule (§9). |
 | `host_error:adapter_unsupported` | The host adapter cannot emit this interception point. |
 | `host_error:no_interceptor` | An `enforce`-mode emission with zero registered interceptors (§7). |
 | `host_error:streaming_unsupported` | The host cannot satisfy §12 for a streaming response. |
+
+Removed relative to earlier drafts: `host_error:approval_resolver_missing`
+(a liftable deny with no resolver is simply enforced as a deny, §9) and
+`host_error:approval_action_mismatch` (renamed to
+`approval_identity_mismatch`).
 
 The machine-readable inventory is `spec/reserved-reasons.json`.
 
@@ -702,11 +994,12 @@ tools concurrently. The contract is per tool call, not per batch:
 1. Each tool call MUST be bracketed by its own
    `pre_tool_call`/`post_tool_call` pair sharing one distinct
    `tool_call.id`; the tool MUST NOT start before its `pre_tool_call`
-   fold completes and `post_tool_call` MUST NOT be emitted before the
-   tool returns.
+   composition completes and `post_tool_call` MUST NOT be emitted
+   before the tool returns.
 2. Emissions belonging to *different* tool calls MAY proceed
-   concurrently and MAY interleave. Within a single emission the §7.1
-   fold remains strictly sequential.
+   concurrently and MAY interleave. Within a single emission the
+   declared composition profile (§7) governs dispatch; a sequential
+   profile's fold remains strictly sequential.
 3. `sequence` values MUST be unique and totally ordered within the
    session; hosts MUST assign them atomically (they establish the
    audit order of records under concurrency).
@@ -719,22 +1012,25 @@ tools concurrently. The contract is per tool call, not per batch:
 
 ## 13. Conformance
 
-### 13.1 Conformance
+### 13.1 Single level, declared surface, reported results
 
-| Requirement |
-| --- |
-| A host is **conformant** when it passes 100% of the CTK vectors applicable to its declared capability subset (§3.2). |
+There are no conformance tiers, levels, or baseline profiles. A host
+**declares** its surface:
 
-There are no conformance tiers. The single bar includes correct
-emission (order, schema-valid L0+L1 contexts per §3–§4) and correct
-enforcement (`deny`, `transform` fold-through, `escalate` with the
-approval seam, `evaluate_only`, and the fail-closed rules of §6.3 and
-§7). A host that only wants observation is out of scope for this
-specification (§1.1); partial adapters under development can run vector
-subsets locally but MUST NOT claim conformance.
+- its capability subset (§3.2),
+- the composition profiles and knob values it supports (§7.2),
+- its identity provider (§10.1).
 
-Populating L2 fields where the framework has the data is a SHOULD and
-is not conformance-gated.
+A host is **conformant** when it passes 100% of the CTK vectors
+applicable to its declaration. The CTK emits a **conformance report**
+that enumerates, per declared part (each profile, each knob value, the
+approval seam, the identity provider, `evaluate_only`, the fail-closed
+rules of §6.3 and §7), which vectors ran and whether they passed —
+so a claim communicates *what was exercised*, not a tier name.
+
+Partial adapters under development can run vector subsets locally but
+MUST NOT claim conformance. Populating optional (§4.5) fields where the
+framework has the data is a SHOULD and is not conformance-gated.
 
 ### 13.2 CTK
 
@@ -743,18 +1039,22 @@ A host claims conformance by:
 
 1. Implementing the `Harness` interface in at least one SDK language
    (`conformance/HARNESS.md`).
-2. Declaring its `capabilities` subset (§3.2).
-3. Passing 100% of non-skipped vectors.
+2. Declaring its surface per §13.1.
+3. Passing 100% of non-skipped vectors and attaching the report.
 
 Vectors are language-agnostic JSON under `conformance/vectors/` validated by
-`conformance/vectors.schema.json`. Per-language CTK runners are provided under
-`sdk/<lang>/`.
+`conformance/vectors.schema.json`; vectors that exercise composition
+carry the profile/knobs they apply to. The golden identity vectors
+apply only when the declared provider is `jcs-sha256`. Per-language CTK
+runners are provided under `sdk/<lang>/`.
 
 ### 13.3 Claims
 
 A conformance claim is the tuple
-`(<framework>, <adapter-version>, agent-hooks/<spec-version>, <capabilities>, <sdk-lang>@<sdk-version>)`
-recorded in `conformance/CLAIMS.md`.
+`(<framework>, <adapter-version>, agent-hooks/<spec-version>, <capabilities>, <profiles>, <identity-provider>, <sdk-lang>@<sdk-version>)`
+plus the CTK report, recorded in `conformance/CLAIMS.md`. A claim with
+`identity_provider: null` MUST state that its approvals and records are
+identity-unbound.
 
 ---
 
@@ -777,6 +1077,18 @@ threat→mitigation→test traceability is `docs/THREAT-MODEL.md`.
 - A `transform` verdict rewrites data the agent will act on. Hosts SHOULD
   authenticate interceptors and SHOULD log every applied transform with both
   `input_identity` and `enforced_identity`.
+- Composition profiles change which controls observe which content. In
+  `sequential/first_deny` with `on_approval: "stop"`, interceptors after
+  the escalating one never run — mitigate by registering must-run
+  controls first, or by choosing `sequential/run_all` or a parallel
+  profile. A malicious interceptor can blind its successors via
+  transform in any sequential profile; parallel profiles remove that
+  vector at the cost of transform chaining.
+- With `identity_provider: null`, approvals are bound only by
+  request/response correlation, not content: an approval says "this
+  request event", not "these bytes". Deployments whose approvers or
+  auditors rely on content binding should keep `jcs-sha256` (or a
+  content-derived custom provider).
 - `evaluate_only` mode MUST NOT be presented to downstream systems as
   enforcement; doing so is a compliance hazard.
 
@@ -788,6 +1100,7 @@ threat→mitigation→test traceability is `docs/THREAT-MODEL.md`.
 - [RFC 8174] Ambiguity of Uppercase vs Lowercase in RFC 2119 Key Words.
 - [RFC 8259] The JavaScript Object Notation (JSON) Data Interchange Format.
 - [RFC 3339] Date and Time on the Internet: Timestamps.
+- [RFC 7493] The I-JSON Message Format.
 - [RFC 8785] JSON Canonicalization Scheme (JCS).
 - Agent Control Specification v0.3.1-beta. `policy-engine/spec/SPECIFICATION.md`.
 - AGT-SNAPSHOT-1.0. `policy-engine/spec/agt/AGT-SNAPSHOT-1.0.md`.

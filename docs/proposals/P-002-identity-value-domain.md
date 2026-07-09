@@ -1,6 +1,11 @@
 # P-002: Which JSON values can carry a stable context identity?
 
-**Status:** Open.
+**Status:** Superseded by
+[P-004](P-004-identity-as-optional-seam.md) (decided 2026-07-09).
+Identity became a pluggable provider seam; the I-JSON rejection rules
+became the contract of the default `jcs-sha256` provider rather than a
+wire mandate. The SDK marshalling guards, the SHOULD-level 64-bit
+string-encoding guidance, and the tier rename survive unchanged.
 **Raised by:** 2026-07-07 architectural review (NOW-13).
 
 ## Background: what RFC 8785 can and cannot represent
