@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """Build agent-hooks design-review deck.
 
+NOTE: point-in-time artifact — this deck describes the spec as of the
+2026-07 design review, BEFORE P-003 (three-verdict model, composition
+profiles) and P-004 (identity provider seam) landed. It intentionally
+still shows the five-verdict model and L0-L3 tiers. Regenerate against
+spec/AGENT-HOOKS-0.1.md before presenting again.
+
 Layout: 13.333" x 7.5" widescreen. Microsoft brand palette (matches
 AAIF_AGT_Technical_Review.pptx). All diagrams drawn as native PowerPoint
 shapes so they remain editable and crisp.

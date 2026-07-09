@@ -48,12 +48,12 @@ caller frees with `ah_free_result`.
 per-language wrapper                       Rust core (via FFI)
 ──────────────────────                     ─────────────────────────
 build AgentContext              ──────►
-for interceptor in registered:
+dispatch per composition profile
+(sequential fold / parallel snapshots):
     r = interceptor.intercept(ctx)  ◄── native callback
                                 ──────►    validate_verdict(r)
-    if block: break
-                                ──────►    combine_verdicts([...])
-if escalate:
+                                ──────►    compose_aggregate([...])
+if liftable deny (per profile):
     resolver.resolve(...)           ◄── native callback
                                 ──────►    enforce(ctx, verdict, mode)
                                 ◄──────    {record, ctx'}  (target rewritten)

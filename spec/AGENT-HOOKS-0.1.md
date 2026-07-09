@@ -641,8 +641,11 @@ Aggregation selects **one winning verdict** and unions the metadata:
 
 1. The winner is the highest-severity verdict per the §5.1 order.
    Ties between block verdicts resolve to the lowest registration
-   index (that index becomes `decided_by`, §10.3). Ties between
-   transforms are a conflict (§7.5).
+   index (that index becomes `decided_by`, §10.3). Transform ties are
+   a conflict **only in parallel profiles** (§7.5), where the
+   transforms were produced against the same snapshot and cannot
+   compose; in sequential profiles transforms composed through the
+   fold (§7.4), so the last transform returned is the winner.
 2. The combined verdict is the winner (or the approval resolution that
    substitutes for it, §7.6), with:
    - `warnings`: the first-seen-ordered union of `warnings` from
@@ -1017,7 +1020,9 @@ tools concurrently. The contract is per tool call, not per batch:
 There are no conformance tiers, levels, or baseline profiles. A host
 **declares** its surface:
 
-- its capability subset (§3.2),
+- its capability subset (§3.2), including value-domain capabilities
+  the CTK defines (e.g. `int64_json`: the language can observe a JSON
+  integer beyond ±(2⁵³−1) without rounding — JavaScript hosts cannot),
 - the composition profiles and knob values it supports (§7.2),
 - its identity provider (§10.1).
 

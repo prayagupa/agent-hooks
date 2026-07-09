@@ -58,12 +58,16 @@ the normative statement.
    │     (ACS, content filter, rate limiter, egress guard…)    │
    └─────────────────────────┬────────────────────────────────┘
                              ▼
-                   Verdict { allow | deny | warn | escalate | transform }
+                   Verdict { allow | deny | transform }
+                     (warnings ride on any verdict;
+                      deny + approval block = liftable via the seam)
                              │
          ┌───────────────────┴───────────────────┐
          ▼                                       ▼
-   permit → proceed                    block → halt / approval seam
-   (transform rewrites $target)
+   permit → proceed                    block → halt
+   (transform rewrites $target)        (liftable deny may be lifted
+                                        by the approval seam, per the
+                                        host's composition profile)
 ```
 
 ## Quick start
@@ -84,10 +88,13 @@ pytest --agent-hooks-harness=your_pkg:YourHarness
 ## Conformance
 
 A host is **conformant** when it passes 100% of the CTK vectors
-applicable to its declared capability subset — a single bar covering
-correct emission and correct enforcement (`deny`, `transform`
-fold-through, `escalate`, `evaluate_only`, fail-closed). There are no
-tiers, and a conformance claim is not a security certification.
+applicable to its declared surface (interception-point capabilities,
+composition profiles, identity provider) — a single bar covering
+correct emission and correct enforcement (`deny`, `transform`,
+liftable denies through the approval seam, `evaluate_only`,
+fail-closed). There are no tiers or baseline profiles; the CTK report
+enumerates per-part what was exercised. A conformance claim is not a
+security certification.
 
 See [`conformance/CLAIMS.md`](conformance/CLAIMS.md).
 
