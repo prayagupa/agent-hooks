@@ -53,10 +53,11 @@ type ToolInvocation struct {
 
 // IdentityPair is one (input_identity, enforced_identity) pair per
 // interception, taken from the emitter's InterceptionRecords so the
-// CTK can assert expect.identities_equal.
+// CTK can assert expect.identities_equal. Identities are nil when the
+// identity provider is nil (§10.1).
 type IdentityPair struct {
-	InputIdentity    string `json:"input_identity"`
-	EnforcedIdentity string `json:"enforced_identity"`
+	InputIdentity    *string `json:"input_identity"`
+	EnforcedIdentity *string `json:"enforced_identity"`
 }
 
 // RunRecord is what Harness.Run returns to the CTK runner.
@@ -75,11 +76,15 @@ type Harness interface {
 	Name() string
 	Capabilities() map[Capability]struct{}
 
+	// Setup wires the scenario's mock model + tools into the framework,
+	// registers the interceptors and resolver, and sets the enforcement
+	// mode and the vector's composition profile (§7.1).
 	Setup(
 		scenario Scenario,
 		interceptors []agenthooks.Interceptor,
 		resolver agenthooks.ApprovalResolver,
 		mode agenthooks.EnforcementMode,
+		composition agenthooks.CompositionConfig,
 	) error
 
 	Run(ctx context.Context) (RunRecord, error)

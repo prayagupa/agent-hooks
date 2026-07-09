@@ -15,11 +15,13 @@ using System.Runtime.InteropServices;
 namespace AgentHooks;
 
 /// <summary>Thrown by every native-backed function on failure.
-/// <see cref="Code"/> is the §11 <c>host_error:*</c> wire string.</summary>
+/// <see cref="Code"/> is the §11 <c>host_error:*</c> wire string;
+/// <see cref="Detail"/> the core's remediation message.</summary>
 public sealed class AgentHooksCoreException(string code, string detail)
     : InvalidOperationException($"{code}: {detail}")
 {
     public string Code { get; } = code;
+    public string Detail { get; } = detail;
 }
 
 internal static partial class Native
@@ -59,7 +61,10 @@ internal static partial class Native
     private static partial IntPtr ah_validate_transform_ctx(string ctxJson, string path, string valueJson);
 
     [LibraryImport(Lib, StringMarshalling = StringMarshalling.Utf8)]
-    private static partial IntPtr ah_finalize(string ctxJson, string verdictJson, string mode, string inputIdentity, long decidedBy);
+    private static partial IntPtr ah_finalize(string ctxJson, string verdictJson, string mode, string optionsJson);
+
+    [LibraryImport(Lib, StringMarshalling = StringMarshalling.Utf8)]
+    private static partial IntPtr ah_compose_aggregate(string compositionJson, string verdictsJson);
 
     // ---- CTK engine (§13.2) ------------------------------------------------
 
@@ -105,8 +110,10 @@ internal static partial class Native
         Unwrap(ah_apply_transform_ctx(ctxJson, path, valueJson));
     internal static string ValidateTransformCtx(string ctxJson, string path, string valueJson) =>
         Unwrap(ah_validate_transform_ctx(ctxJson, path, valueJson));
-    internal static string Finalize(string ctxJson, string verdictJson, string mode, string inputIdentity, long decidedBy) =>
-        Unwrap(ah_finalize(ctxJson, verdictJson, mode, inputIdentity, decidedBy));
+    internal static string Finalize(string ctxJson, string verdictJson, string mode, string optionsJson) =>
+        Unwrap(ah_finalize(ctxJson, verdictJson, mode, optionsJson));
+    internal static string ComposeAggregate(string compositionJson, string verdictsJson) =>
+        Unwrap(ah_compose_aggregate(compositionJson, verdictsJson));
 
     internal static string CtkScriptedIntercept(string rulesJson, string ctxJson) =>
         Unwrap(ah_ctk_scripted_intercept(rulesJson, ctxJson));

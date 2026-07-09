@@ -12,6 +12,7 @@ from typing import Any, ClassVar
 
 from agent_hooks._types import EnforcementMode
 from agent_hooks.approval import ApprovalResolver
+from agent_hooks.composition import CompositionConfig
 from agent_hooks.context import AgentContextBuilder
 from agent_hooks.ctk.harness import Capability, RunOutcome, RunRecord, Scenario
 from agent_hooks.emitter import InterceptionEmitter
@@ -41,10 +42,11 @@ class ReferenceHarness:
         interceptors: list[Interceptor],
         resolver: ApprovalResolver | None,
         mode: EnforcementMode,
+        composition: CompositionConfig | None = None,
     ) -> None:
         self._scenario = scenario
         self._tool_log = []
-        em = InterceptionEmitter(mode=mode, resolver=resolver)
+        em = InterceptionEmitter(mode=mode, resolver=resolver, composition=composition)
         for i in interceptors:
             em.register(i)
         self._emitter = em

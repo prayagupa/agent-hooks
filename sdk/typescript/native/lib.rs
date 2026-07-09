@@ -69,10 +69,14 @@ pub fn finalize(
     ctx_json: String,
     verdict_json: String,
     mode: String,
-    input_identity: String,
-    decided_by: i64,
+    options_json: String,
 ) -> Result<String> {
-    core::finalize(&ctx_json, &verdict_json, &mode, &input_identity, decided_by).map_err(map_err)
+    core::finalize(&ctx_json, &verdict_json, &mode, &options_json).map_err(map_err)
+}
+
+#[napi]
+pub fn compose_aggregate(composition_json: String, verdicts_json: String) -> Result<String> {
+    core::compose_aggregate(&composition_json, &verdicts_json).map_err(map_err)
 }
 
 // ---- CTK engine (§13.2) ---------------------------------------------------

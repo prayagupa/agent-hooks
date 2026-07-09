@@ -9,6 +9,7 @@ from typing import Any, Protocol
 
 from agent_hooks._types import EnforcementMode
 from agent_hooks.approval import ApprovalResolver
+from agent_hooks.composition import CompositionConfig
 from agent_hooks.interceptor import Interceptor
 
 
@@ -104,8 +105,9 @@ class RunRecord:
     tool_invocations: list[dict[str, Any]] = field(default_factory=list)
     error: str | None = None
     #: ``(input_identity, enforced_identity)`` per interception, in order,
-    #: from the harness's emitter. Enables ``expect.identities_equal``.
-    identities: list[tuple[str, str]] = field(default_factory=list)
+    #: from the harness's emitter (``None`` when the identity provider is
+    #: ``null``, §10.1). Enables ``expect.identities_equal``.
+    identities: list[tuple[str | None, str | None]] = field(default_factory=list)
 
 
 class Harness(Protocol):
@@ -120,6 +122,7 @@ class Harness(Protocol):
         interceptors: list[Interceptor],
         resolver: ApprovalResolver | None,
         mode: EnforcementMode,
+        composition: CompositionConfig,
     ) -> None: ...
 
     async def run(self) -> RunRecord: ...

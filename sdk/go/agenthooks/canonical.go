@@ -60,7 +60,8 @@ func ValidateVerdict(v Verdict) error {
 	return err
 }
 
-// Verdict combination (§7.1) is sequential fold-through implemented in
-// the emitter dispatch loop; the per-step primitives live in the core
-// (nativeApplyTransformCtx / nativeValidateTransformCtx) and the shared
-// semantics are enforced by the cross-language CTK vectors.
+// Verdict combination (§7) is implemented in the emitter dispatch loop
+// per the declared composition profile; the per-step primitives live in
+// the core (nativeApplyTransformCtx / nativeValidateTransformCtx /
+// nativeComposeAggregate) and the shared semantics are enforced by the
+// cross-language CTK vectors.

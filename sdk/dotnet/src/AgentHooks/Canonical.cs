@@ -51,15 +51,24 @@ public static class Canonical
             path,
             value?.ToJsonString(Compact) ?? "null");
 
-    /// <summary>§6/§10: build the <c>InterceptionRecord</c> for one completed
-    /// interception. Rust core.</summary>
+    /// <summary>§6/§10.3: build the <c>InterceptionRecord</c> for one completed
+    /// emission. <paramref name="options"/> is the ah_finalize options object
+    /// (<c>input_identity</c>, <c>identity_provider</c>, <c>enforced_identity</c>,
+    /// <c>decided_by</c>, <c>composition</c> (REQUIRED), <c>verdicts</c>,
+    /// <c>fold_truncated</c>, <c>resolved_by</c>). Rust core.</summary>
     public static JsonObject Finalize(
-        AgentContext ctx, JsonNode verdict, EnforcementMode mode, string inputIdentity,
-        int? decidedBy = null) =>
+        AgentContext ctx, JsonNode verdict, EnforcementMode mode, JsonObject options) =>
         (JsonObject)JsonNode.Parse(Native.Finalize(
             ctx.Json.ToJsonString(Compact),
             verdict.ToJsonString(Compact),
             mode == EnforcementMode.Enforce ? "enforce" : "evaluate_only",
-            inputIdentity,
-            decidedBy ?? -1))!;
+            options.ToJsonString(Compact)))!;
+
+    /// <summary>§7.3/§7.5: severity-max aggregation for the multi-verdict
+    /// composition profiles. Returns <c>{combined, decided_by, consult,
+    /// apply_transform, verdicts}</c>. Rust core.</summary>
+    public static JsonObject ComposeAggregate(CompositionConfig composition, JsonArray verdicts) =>
+        (JsonObject)JsonNode.Parse(Native.ComposeAggregate(
+            composition.ToWire().ToJsonString(Compact),
+            verdicts.ToJsonString(Compact)))!;
 }

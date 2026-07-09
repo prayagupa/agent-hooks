@@ -33,13 +33,19 @@ func CtkScriptedIntercept(rulesJSON string, ctx AgentContext) (Verdict, error) {
 }
 
 // CtkScriptedResolve evaluates a vector's approval_script against the
-// request context via the Rust core, echoing identity.
-func CtkScriptedResolve(rulesJSON string, ctx AgentContext, identity string) (ApprovalResolution, error) {
+// request context via the Rust core, echoing identity. identity may be
+// nil (§10.1 null provider): the scripted engine works in strings, so
+// nil round-trips through "" and back to nil on echo.
+func CtkScriptedResolve(rulesJSON string, ctx AgentContext, identity *string) (ApprovalResolution, error) {
 	cb, err := json.Marshal(map[string]any(ctx))
 	if err != nil {
 		return ApprovalResolution{}, err
 	}
-	out, err := nativeCtkScriptedResolve(rulesJSON, string(cb), identity)
+	requestIdentity := ""
+	if identity != nil {
+		requestIdentity = *identity
+	}
+	out, err := nativeCtkScriptedResolve(rulesJSON, string(cb), requestIdentity)
 	if err != nil {
 		return ApprovalResolution{}, err
 	}
@@ -55,9 +61,13 @@ func CtkScriptedResolve(rulesJSON string, ctx AgentContext, identity string) (Ap
 	if err := json.Unmarshal([]byte(out), &r); err != nil {
 		return ApprovalResolution{}, err
 	}
+	var echoed *string
+	if !(r.ContextIdentity == "" && identity == nil) {
+		echoed = &r.ContextIdentity
+	}
 	return ApprovalResolution{
 		Outcome:         r.Outcome,
-		ContextIdentity: r.ContextIdentity,
+		ContextIdentity: echoed,
 		Verdict:         r.Verdict,
 	}, nil
 }

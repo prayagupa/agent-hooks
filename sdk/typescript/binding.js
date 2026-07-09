@@ -310,7 +310,7 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { specVersion, canonicalJson, contextIdentity, validateVerdict, applyTransform, applyTransformCtx, validateTransformCtx, finalize, ctkScriptedIntercept, ctkScriptedResolve, ctkShouldSkip, ctkAssert } = nativeBinding
+const { specVersion, canonicalJson, contextIdentity, validateVerdict, applyTransform, applyTransformCtx, validateTransformCtx, finalize, composeAggregate, ctkScriptedIntercept, ctkScriptedResolve, ctkShouldSkip, ctkAssert } = nativeBinding
 
 module.exports.specVersion = specVersion
 module.exports.canonicalJson = canonicalJson
@@ -320,6 +320,7 @@ module.exports.applyTransform = applyTransform
 module.exports.applyTransformCtx = applyTransformCtx
 module.exports.validateTransformCtx = validateTransformCtx
 module.exports.finalize = finalize
+module.exports.composeAggregate = composeAggregate
 module.exports.ctkScriptedIntercept = ctkScriptedIntercept
 module.exports.ctkScriptedResolve = ctkScriptedResolve
 module.exports.ctkShouldSkip = ctkShouldSkip

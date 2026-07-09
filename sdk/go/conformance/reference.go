@@ -46,10 +46,12 @@ func (h *ReferenceHarness) Setup(
 	interceptors []agenthooks.Interceptor,
 	resolver agenthooks.ApprovalResolver,
 	mode agenthooks.EnforcementMode,
+	composition agenthooks.CompositionConfig,
 ) error {
 	h.scenario = scenario
 	h.toolLog = nil
 	em := agenthooks.NewInterceptionEmitter(mode, resolver)
+	em.SetComposition(composition)
 	for _, i := range interceptors {
 		em.Register(i)
 	}

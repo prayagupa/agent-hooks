@@ -10,6 +10,7 @@
 
 import type {
   ApprovalResolver,
+  CompositionConfig,
   EnforcementMode,
   Interceptor,
   JsonValue,
@@ -52,8 +53,9 @@ export interface RunRecord {
   tool_invocations: Array<{ name: string; args: Record<string, JsonValue> }>;
   error?: string;
   /** `(input_identity, enforced_identity)` per interception, in order,
-   * from the harness's emitter. Enables `expect.identities_equal`. */
-  identities: Array<[string, string]>;
+   * from the harness's emitter (`null` under a `null` identity
+   * provider, §10.1). Enables `expect.identities_equal`. */
+  identities: Array<[string | null, string | null]>;
 }
 
 /** The single interface a framework adapter implements for the CTK. */
@@ -61,11 +63,15 @@ export interface Harness {
   readonly name: string;
   readonly capabilities: ReadonlySet<Capability>;
 
+  /** Wire the scenario's mock model + tools into the framework,
+   * register the interceptors and resolver, set the enforcement mode
+   * and the vector's composition profile (§7.1). */
   setup(
     scenario: Scenario,
     interceptors: Interceptor[],
     resolver: ApprovalResolver | null,
     mode: EnforcementMode,
+    composition: CompositionConfig,
   ): void;
 
   run(): Promise<RunRecord>;

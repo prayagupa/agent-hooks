@@ -25,7 +25,7 @@
     "build:native": "napi build --release --platform --js binding.js --dts binding.d.ts",
     "build:native:debug": "napi build --platform --js binding.js --dts binding.d.ts",
     "build": "npm run build:native && tsc",
-    "test": "npm run build && node --test test/"
+    "test": "npm run build && node --test test/*.mjs"
   },
   "devDependencies": {
     "@napi-rs/cli": "^2.18.0",

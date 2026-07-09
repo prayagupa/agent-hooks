@@ -1,25 +1,31 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
-"""Host-side emitter: dispatch context → interceptors → verdict → record (§6–§9).
+"""Host-side emitter: dispatch context → interceptors → composition →
+combined verdict → record (§6–§10).
 
 Per-language orchestrator over the Rust core:
 
 - Interceptor dispatch (§7) and approval-seam resolution (§9) stay here
   because they call back into user Python code.
-- Verdict validation (§5), transform fold-through (§7.1), identity
-  computation (§10), and target write-back (§4.3) delegate to
-  ``agent_hooks._core`` so behaviour is byte-identical across SDKs.
+- Verdict validation (§5), severity-max aggregation (§7.3, via
+  ``_core.compose_aggregate``), transform application (§5.2), identity
+  computation (§10.2), record finalization (§10.3), and target
+  write-back (§4.3) delegate to ``agent_hooks._core`` so behaviour is
+  byte-identical across SDKs.
 
-§7.1 sequential fold-through: interceptors run in registration order;
-each receives a deep copy of the context as it stands *after* prior
-transforms were applied, so an earlier interceptor's redaction is
-visible to later ones. The first block verdict short-circuits.
+Composition is host configuration (§7.1): the profile is set on the
+emitter (default ``sequential/first_deny, on_approval: stop``) and
+recorded on every emission. "Parallel" profiles are implemented with
+serial dispatch over isolated deep-copied snapshots — §7.2: parallel
+names isolation semantics, not scheduling.
 
 Fail-closed defaults: an ``enforce``-mode emission with zero registered
-interceptors yields ``deny host_error:no_interceptor`` (§7), and
-:meth:`InterceptionEmitter.emit` **raises** :class:`InterceptionBlocked`
-on any block — the ignorable-result variant is the explicitly named
-:meth:`emit_unchecked`.
+interceptors yields ``deny host_error:no_interceptor`` (§7), a context
+that cannot cross the FFI boundary (non-finite number, out-of-domain
+integer, §4.4/§10.2) yields ``deny host_error:context_invalid`` before
+any interceptor runs, and :meth:`InterceptionEmitter.emit` **raises**
+:class:`InterceptionBlocked` on any block — the ignorable-result
+variant is the explicitly named :meth:`emit_unchecked`.
 
 Concurrency (§12.2): emissions for different tool calls may interleave
 on the event loop; ``sequence`` assignment and record append are atomic
@@ -30,23 +36,32 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import dataclasses
 import inspect
 import json
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
 
 from agent_hooks import _core
+from agent_hooks._marshal import dumps
 from agent_hooks._types import (
+    JCS_SHA256,
     Decision,
     EnforcementMode,
     HostError,
     InterceptionPoint,
     InterceptionRecord,
     Verdict,
+    VerdictSummary,
+    Warning,
 )
 from agent_hooks.approval import (
     ApprovalOutcome,
     ApprovalRequest,
     ApprovalResolver,
 )
+from agent_hooks.composition import CompositionConfig, CompositionProfile, OnApproval
 from agent_hooks.context import AgentContext
 from agent_hooks.exceptions import InterceptionBlocked
 from agent_hooks.interceptor import Interceptor
@@ -55,8 +70,126 @@ from agent_hooks.interceptor import Interceptor
 DEFAULT_TIMEOUT: float = 5.0
 
 
+@dataclass(frozen=True, slots=True)
+class IdentityProvider:
+    """A host-supplied identity provider (§10.1): a name (matching
+    ``^[a-z][a-z0-9_-]*$``, not starting with ``jcs``) and a pure
+    function ``AgentContext -> str``. The echo and record rules still
+    apply; the golden vectors do not.
+
+    The shipped default is declared with the string ``"jcs-sha256"``
+    (computed core-side, §10.2); identity-unbound operation with
+    ``None``.
+    """
+
+    name: str
+    fn: Callable[[AgentContext], str]
+
+
+def _host_error_of(e: Exception, default: HostError) -> HostError:
+    try:
+        return HostError(getattr(e, "code", ""))
+    except ValueError:
+        return default
+
+
+def _is_host_synthesized(v: Verdict) -> bool:
+    """Whether a verdict was synthesized by the host (§11) rather than
+    returned by an interceptor or resolver."""
+    return v.reason is not None and v.reason.startswith("host_error:")
+
+
+def _replace(v: Verdict, **kw: Any) -> Verdict:
+    """``dataclasses.replace`` without re-running the §5 constructor
+    gate (the verdict may carry a host-synthesized reason)."""
+    out = object.__new__(Verdict)
+    for f in (
+        "decision",
+        "reason",
+        "message",
+        "warnings",
+        "approval",
+        "transform",
+        "evidence",
+        "result_labels",
+    ):
+        object.__setattr__(out, f, kw.get(f, getattr(v, f)))
+    return out
+
+
+def _union_warnings(pool: list[Verdict]) -> tuple[Warning, ...]:
+    """First-seen-ordered union of ``warnings`` from every verdict (§7.3)."""
+    out: list[Warning] = []
+    for v in pool:
+        for w in v.warnings:
+            if w not in out:
+                out.append(w)
+    return tuple(out)
+
+
+def _union_labels(pool: list[Verdict]) -> tuple[str, ...]:
+    """First-seen-ordered union of ``result_labels`` from every **permit**
+    verdict (§7.3; §5.4 drops labels when the emission does not proceed)."""
+    out: list[str] = []
+    for v in pool:
+        if not v.decision.permits:
+            continue
+        for label in v.result_labels:
+            if label not in out:
+                out.append(label)
+    return tuple(out)
+
+
+def _with_unions(combined: Verdict, pool: list[Verdict]) -> Verdict:
+    """Apply the §7.3 metadata unions to a combined verdict."""
+    kw: dict[str, Any] = {}
+    warnings = _union_warnings(pool)
+    if warnings:
+        kw["warnings"] = warnings
+    if combined.decision.permits:
+        labels = _union_labels(pool)
+        if labels:
+            kw["result_labels"] = labels
+    return _replace(combined, **kw) if kw else combined
+
+
+def _summaries(verdicts: list[Verdict]) -> tuple[VerdictSummary, ...]:
+    """Payload-free per-interceptor summaries for the record (§10.3)."""
+    return tuple(
+        VerdictSummary(index=i, decision=v.decision, reason=v.reason)
+        for i, v in enumerate(verdicts)
+    )
+
+
+def _envelope_only(ctx: AgentContext) -> dict[str, Any]:
+    """The record-relevant envelope of a context that could not cross
+    the FFI boundary intact (§10.3: interception_point, session, sequence)."""
+    out: dict[str, Any] = {}
+    ip = ctx.get("interception_point")
+    if isinstance(ip, str):
+        out["interception_point"] = ip
+    session = ctx.get("session")
+    if isinstance(session, dict) and isinstance(session.get("id"), str):
+        out["session"] = {"id": session["id"]}
+    seq = ctx.get("sequence")
+    if isinstance(seq, int) and not isinstance(seq, bool):
+        out["sequence"] = seq
+    return out
+
+
+@dataclass(slots=True)
+class _Outcome:
+    """Internal result of one profile dispatch."""
+
+    combined: Verdict
+    decided_by: int | None = None
+    verdicts: tuple[VerdictSummary, ...] = ()
+    fold_truncated: bool | None = None
+    resolved_by: str | None = None
+
+
 class InterceptionEmitter:
-    """Host-side helper that implements §6–§9 once so adapters don't have to.
+    """Host-side helper that implements §6–§10 once so adapters don't have to.
 
     ``timeout`` bounds each interceptor ``intercept()`` and resolver
     ``resolve()`` call (§7, RECOMMENDED default 5000 ms); breach fails
@@ -65,9 +198,23 @@ class InterceptionEmitter:
     returns can be preempted — a synchronous interceptor that blocks the
     event loop cannot be interrupted (use async interceptors for
     untrusted latency). ``timeout=None`` disables enforcement.
+
+    ``composition`` declares the profile and knobs in effect (§7.1);
+    ``identity_provider`` declares the identity seam (§10.1):
+    ``"jcs-sha256"`` (default, computed by the core), an
+    :class:`IdentityProvider` (custom name + function), or ``None``
+    (identity-unbound records).
     """
 
-    __slots__ = ("_interceptors", "_mode", "_records", "_resolver", "_timeout")
+    __slots__ = (
+        "_composition",
+        "_identity",
+        "_interceptors",
+        "_mode",
+        "_records",
+        "_resolver",
+        "_timeout",
+    )
 
     def __init__(
         self,
@@ -75,16 +222,40 @@ class InterceptionEmitter:
         mode: EnforcementMode = EnforcementMode.ENFORCE,
         resolver: ApprovalResolver | None = None,
         timeout: float | None = DEFAULT_TIMEOUT,
+        composition: CompositionConfig | None = None,
+        identity_provider: str | IdentityProvider | None = JCS_SHA256,
     ) -> None:
         self._interceptors: list[Interceptor] = []
         self._resolver = resolver
         self._mode = mode
         self._records: list[InterceptionRecord] = []
         self._timeout = timeout
+        self._composition = composition if composition is not None else CompositionConfig.default()
+        self._identity = self._check_provider(identity_provider)
+
+    @staticmethod
+    def _check_provider(
+        provider: str | IdentityProvider | None,
+    ) -> str | IdentityProvider | None:
+        if (
+            provider is not None
+            and not isinstance(provider, IdentityProvider)
+            and provider != JCS_SHA256
+        ):
+            raise ValueError(
+                f"identity_provider must be {JCS_SHA256!r}, an IdentityProvider, "
+                f"or None (got {provider!r}); wrap a custom provider in "
+                "IdentityProvider(name, fn) (§10.1)"
+            )
+        return provider
 
     @property
     def mode(self) -> EnforcementMode:
         return self._mode
+
+    @property
+    def composition(self) -> CompositionConfig:
+        return self._composition
 
     @property
     def results(self) -> list[InterceptionRecord]:
@@ -95,10 +266,22 @@ class InterceptionEmitter:
         self._interceptors.append(interceptor)
         return self
 
+    def set_composition(self, composition: CompositionConfig) -> InterceptionEmitter:
+        """Declare the composition profile for subsequent emissions (§7.1)."""
+        self._composition = composition
+        return self
+
+    def set_identity_provider(
+        self, provider: str | IdentityProvider | None
+    ) -> InterceptionEmitter:
+        """Declare the identity provider (§10.1)."""
+        self._identity = self._check_provider(provider)
+        return self
+
     # -------------------------------------------------------------------------
 
     async def emit(self, ctx: AgentContext) -> InterceptionRecord:
-        """Run the interception and **raise** :class:`InterceptionBlocked`
+        """Run the emission and **raise** :class:`InterceptionBlocked`
         if the guarded action must not proceed (§6). This is the primary
         entry point; the safe path is the default."""
         record = await self.emit_unchecked(ctx)
@@ -107,125 +290,377 @@ class InterceptionEmitter:
         return record
 
     async def emit_unchecked(self, ctx: AgentContext) -> InterceptionRecord:
-        """Run the interception and return the record without raising.
+        """Run the emission and return the record without raising.
 
         The caller MUST inspect :attr:`InterceptionRecord.proceeds` and
         halt the guarded action itself; prefer :meth:`emit`.
         """
-        # §10.2: input identity binds to the context BEFORE dispatch, so
+        # §10.3: input identity binds to the context BEFORE dispatch, so
         # neither interceptor mutation nor fold-through can retroactively
         # alter what the record claims was evaluated.
-        input_id = _core.context_identity(json.dumps(ctx))
+        input_identity: str | None = None
+        outcome: _Outcome | None = None
+        try:
+            # §4.4 marshalling guard: a context the wire cannot carry
+            # (NaN/Infinity) fails closed before any interceptor runs.
+            dumps(ctx)
+            input_identity = self._compute_identity(ctx)
+        except _core.AgentHooksCoreError as e:
+            # §10.2: the default provider rejected the value domain.
+            outcome = _Outcome(
+                Verdict.host_error(_host_error_of(e, HostError.CONTEXT_INVALID), str(e))
+            )
+        except ValueError as e:
+            outcome = _Outcome(
+                Verdict.host_error(
+                    HostError.CONTEXT_INVALID, f"context is not RFC 8259 JSON: {e}"
+                )
+            )
+        except Exception as e:  # noqa: BLE001 — custom provider raised; fail closed
+            outcome = _Outcome(
+                Verdict.host_error(HostError.CONTEXT_INVALID, type(e).__name__)
+            )
+        if outcome is None:
+            outcome = await self._dispatch(ctx)
 
-        verdict, decided_by = await self._dispatch(ctx)
-
-        ip = InterceptionPoint(ctx["interception_point"])
-        if (
-            verdict.decision is Decision.ESCALATE
-            and self._mode is EnforcementMode.ENFORCE
-            # §6.1a: nothing to approve at agent_shutdown.
-            and ip is not InterceptionPoint.AGENT_SHUTDOWN
-        ):
-            verdict = await self._resolve_escalate(ip, ctx, verdict, input_id)
-            # An approve MAY carry a transform (§9); it is subject to the
-            # same fold rules as an interceptor transform.
-            if verdict.decision is Decision.TRANSFORM:
-                verdict = self._fold_transform(ctx, verdict)
-            # A resolver-substituted verdict keeps the escalating
-            # interceptor's index; host-synthesized failures do not.
-            if verdict.reason is not None and verdict.reason.startswith("host_error:"):
-                decided_by = None
-
-        record_json = _core.finalize(
-            json.dumps(ctx),
-            json.dumps(verdict.to_wire()),
-            self._mode.value,
-            input_id,
-            -1 if decided_by is None else decided_by,
-        )
-        record = InterceptionRecord.from_core(json.loads(record_json))
+        record = self._finalize(ctx, outcome, input_identity)
         self._records.append(record)
         return record
 
     # -------------------------------------------------------------------------
 
-    async def _dispatch(self, ctx: AgentContext) -> tuple[Verdict, int | None]:
-        """§7 dispatch with §7.1 sequential fold-through.
+    def _provider_name(self) -> str | None:
+        if self._identity is None:
+            return None
+        if isinstance(self._identity, IdentityProvider):
+            return self._identity.name
+        return JCS_SHA256
 
-        Returns the combined verdict and the registration index of the
-        deciding interceptor (``None`` for pure allow or a
-        host-synthesized verdict).
-        """
-        if not self._interceptors:
-            # §7: zero interceptors fails closed. Register an explicit
-            # allow-all interceptor for a deliberate passthrough.
-            return Verdict.host_error(HostError.NO_INTERCEPTOR), None
+    def _compute_identity(self, ctx: AgentContext) -> str | None:
+        """Provider output for ``ctx`` (§10.1); ``None`` iff the provider
+        is ``None``. Raises on a §10.2 value-domain rejection."""
+        if self._identity is None:
+            return None
+        if isinstance(self._identity, IdentityProvider):
+            return self._identity.fn(ctx)
+        return _core.context_identity(dumps(ctx))
 
-        combined = Verdict(decision=Decision.ALLOW)
-        decided_by: int | None = None
-        for i, c in enumerate(self._interceptors):
+    def _finalize(
+        self, ctx: AgentContext, outcome: _Outcome, input_identity: str | None
+    ) -> InterceptionRecord:
+        """Build the §10.3 record via ``_core.finalize``."""
+        declared = self._provider_name()
+        options: dict[str, Any] = {
+            "input_identity": input_identity,
+            "identity_provider": declared,
+            # Custom providers only; jcs-sha256 is computed core-side
+            # from the post-composition context.
+            "enforced_identity": None,
+            "decided_by": outcome.decided_by,
+            "composition": self._composition.to_wire(),
+            "verdicts": [s.to_wire() for s in outcome.verdicts],
+            "fold_truncated": outcome.fold_truncated,
+            "resolved_by": outcome.resolved_by,
+        }
+        if isinstance(self._identity, IdentityProvider) and input_identity is not None:
             try:
-                # §7.1/N05: each interceptor gets its own deep copy — an
-                # in-place mutation of the copy cannot alter enforcement.
-                raw = c.intercept(copy.deepcopy(ctx))
-                if inspect.isawaitable(raw):
-                    # §7 timeout: only the awaitable path is preemptible.
-                    if self._timeout is not None:
-                        raw = await asyncio.wait_for(raw, self._timeout)
-                    else:
-                        raw = await raw
-                w = raw.to_wire() if isinstance(raw, Verdict) else raw
-                _core.validate_verdict(json.dumps(w))  # §5
-                v = Verdict.from_wire(w)
-            except (TimeoutError, asyncio.TimeoutError):
-                return Verdict.host_error(HostError.INTERCEPTOR_TIMEOUT), None
-            except _core.AgentHooksCoreError as e:
-                return Verdict.host_error(
-                    HostError(getattr(e, "code", HostError.VERDICT_INVALID.value)), str(e)
-                ), None
-            except Exception as e:  # noqa: BLE001 — fail closed per §6.3
-                return Verdict.host_error(HostError.INTERCEPTOR_FAILED, type(e).__name__), None
+                options["enforced_identity"] = self._identity.fn(ctx)
+            except Exception:  # noqa: BLE001 — honest absence over failure
+                options["enforced_identity"] = None
+        verdict_json = dumps(outcome.combined.to_wire())
+        try:
+            record_json = _core.finalize(
+                dumps(ctx), verdict_json, self._mode.value, dumps(options)
+            )
+        except ValueError:
+            # The context cannot cross the FFI boundary intact (the
+            # emission already failed closed above); record the envelope
+            # only, with null identities — honest absence (§10.1).
+            options["identity_provider"] = None
+            options["enforced_identity"] = None
+            record_json = _core.finalize(
+                dumps(_envelope_only(ctx)), verdict_json, self._mode.value, dumps(options)
+            )
+        record = InterceptionRecord.from_core(json.loads(record_json))
+        if record.identity_provider != declared:
+            record = dataclasses.replace(record, identity_provider=declared)
+        return record
 
-            if v.decision.blocks:
-                return v, i  # first block short-circuits (§7.1)
-            if v.decision is Decision.TRANSFORM:
+    # -------------------------------------------------------------------------
+
+    async def _dispatch(self, ctx: AgentContext) -> _Outcome:
+        """Profile dispatch (§7.4–§7.5). Returns the combined verdict
+        and its record metadata."""
+        if not self._interceptors:
+            # §7: zero interceptors fails closed, profile-independent.
+            # Register an explicit allow-all interceptor for a
+            # deliberate passthrough.
+            return _Outcome(Verdict.host_error(HostError.NO_INTERCEPTOR))
+        profile = self._composition.profile
+        if profile is CompositionProfile.SEQUENTIAL_FIRST_DENY:
+            return await self._dispatch_first_deny(ctx)
+        if profile is CompositionProfile.SEQUENTIAL_RUN_ALL:
+            return await self._dispatch_run_all(ctx)
+        return await self._dispatch_parallel(ctx)
+
+    async def _invoke(self, interceptor: Interceptor, ctx: AgentContext) -> Verdict:
+        """Invoke one interceptor on its own deep copy of the context
+        (§7) and normalize the return through the §5 gate; every failure
+        maps to the §6.3 host-synthesized deny."""
+        try:
+            # §7: each interceptor gets its own deep copy — an in-place
+            # mutation of the copy cannot alter enforcement.
+            raw = interceptor.intercept(copy.deepcopy(ctx))
+            if inspect.isawaitable(raw):
+                # §7 timeout: only the awaitable path is preemptible.
+                if self._timeout is not None:
+                    raw = await asyncio.wait_for(raw, self._timeout)
+                else:
+                    raw = await raw
+        except (TimeoutError, asyncio.TimeoutError):
+            return Verdict.host_error(HostError.INTERCEPTOR_TIMEOUT)
+        except Exception as e:  # noqa: BLE001 — fail closed per §6.3
+            return Verdict.host_error(HostError.INTERCEPTOR_FAILED, type(e).__name__)
+        try:
+            wire = raw.to_wire() if isinstance(raw, Verdict) else raw
+            # §5 gate in the core; from_wire re-types the normalized JSON.
+            return Verdict.from_wire(json.loads(_core.validate_verdict(dumps(wire))))
+        except _core.AgentHooksCoreError as e:
+            return Verdict.host_error(_host_error_of(e, HostError.VERDICT_INVALID), str(e))
+        except Exception as e:  # noqa: BLE001 — non-JSON return etc.
+            return Verdict.host_error(HostError.VERDICT_INVALID, str(e))
+
+    async def _dispatch_first_deny(self, ctx: AgentContext) -> _Outcome:
+        """``sequential/first_deny`` (§7.4): fold-through, first deny
+        short-circuits; a liftable deny consults the seam, then ``stop``
+        or ``resume`` per the knob."""
+        n = len(self._interceptors)
+        on_approval = self._composition.on_approval or OnApproval.STOP
+        per: list[Verdict] = []  # index-aligned §10.3 summaries
+        pool: list[Verdict] = []  # + substituted resolutions, §7.3 unions
+        last_transform: tuple[int, Verdict] | None = None
+        resolved_by: str | None = None
+
+        def truncated(i: int) -> bool:
+            return i + 1 < n
+
+        for i, interceptor in enumerate(self._interceptors):
+            v = await self._invoke(interceptor, ctx)
+            per.append(v)
+            pool.append(v)
+            if _is_host_synthesized(v):
+                # §6.3: malformed verdict fails closed and — in this
+                # profile — short-circuits like any deny.
+                return _Outcome(
+                    _with_unions(v, pool), None, _summaries(per), truncated(i), resolved_by
+                )
+
+            if v.decision is Decision.DENY:
+                consultation = await self._consult(ctx, v)
+                if consultation is None:
+                    return _Outcome(
+                        _with_unions(v, pool), i, _summaries(per), truncated(i), resolved_by
+                    )
+                rv, permitted = consultation
+                if not permitted:
+                    # Reject / unresolved / echo violation: a deny
+                    # stands (§9).
+                    synthesized = _is_host_synthesized(rv)
+                    return _Outcome(
+                        _with_unions(rv, pool),
+                        None if synthesized else i,
+                        _summaries(per),
+                        truncated(i),
+                        resolved_by,
+                    )
+                resolved_by = "approval"
+                # §7.6: the permit resolution substitutes at this
+                # position; its transform folds like an interceptor's
+                # (§7.4).
+                sub = self._fold_transform(ctx, rv) if rv.decision is Decision.TRANSFORM else rv
+                if not sub.decision.permits:
+                    return _Outcome(sub, None, _summaries(per), truncated(i), resolved_by)
+                pool.append(sub)
+                if on_approval is OnApproval.STOP:
+                    # §7.4 stop: the resolution is the combined verdict;
+                    # the emission ends. fold_truncated makes the skip
+                    # legible.
+                    return _Outcome(
+                        _with_unions(sub, pool), i, _summaries(per), truncated(i), resolved_by
+                    )
+                if sub.decision is Decision.TRANSFORM:
+                    last_transform = (i, sub)
+                # resume: fold continues at i+1
+            elif v.decision is Decision.TRANSFORM:
                 v = self._fold_transform(ctx, v)
-                if v.decision.blocks:  # transform failed closed (host-synthesized)
-                    return v, None
-                combined = v
-                decided_by = i
-            elif v.decision is Decision.WARN and combined.decision is Decision.ALLOW:
-                combined = v
-                decided_by = i
-        return combined, decided_by
+                if not v.decision.permits:
+                    # Transform failed closed (host-synthesized §5.2).
+                    return _Outcome(v, None, _summaries(per), truncated(i), resolved_by)
+                last_transform = (i, v)
+            # allow: continue
+
+        # No standing deny: combined is the last transform, else allow.
+        if last_transform is not None:
+            decided_by, combined = last_transform
+        else:
+            combined, decided_by = Verdict(decision=Decision.ALLOW), None
+        return _Outcome(
+            _with_unions(combined, pool), decided_by, _summaries(per), False, resolved_by
+        )
+
+    async def _dispatch_run_all(self, ctx: AgentContext) -> _Outcome:
+        """``sequential/run_all`` (§7.4): everything runs, transforms
+        fold through for visibility, severity-max aggregate; the seam is
+        consulted at most once, only when the winner is liftable."""
+        all_v: list[Verdict] = []
+        for interceptor in self._interceptors:
+            # §6.3 per-interceptor: a malformed verdict becomes that
+            # interceptor's synthesized deny; the rest still run.
+            v = await self._invoke(interceptor, ctx)
+            if v.decision is Decision.TRANSFORM:
+                folded = self._fold_transform(ctx, v)
+                all_v.append(folded)
+                if not folded.decision.permits:
+                    # §7.4: a transform that fails to apply
+                    # short-circuits in both sequential profiles.
+                    return _Outcome(folded, None, _summaries(all_v))
+            else:
+                all_v.append(v)
+        return await self._aggregate_and_consult(ctx, all_v)
+
+    async def _dispatch_parallel(self, ctx: AgentContext) -> _Outcome:
+        """Parallel profiles (§7.5): isolated deep-copied snapshots of
+        the same untransformed context, no fold; serial dispatch
+        (isolation semantics, not scheduling)."""
+        snapshot = copy.deepcopy(ctx)
+        all_v: list[Verdict] = []
+        for interceptor in self._interceptors:
+            # _invoke deep-copies again, so each interceptor receives
+            # its own copy of the identical snapshot.
+            all_v.append(await self._invoke(interceptor, snapshot))
+        return await self._aggregate_and_consult(ctx, all_v)
+
+    async def _aggregate_and_consult(self, ctx: AgentContext, all_v: list[Verdict]) -> _Outcome:
+        """Severity-max aggregation (§7.3, core-side) + winner handling,
+        shared by ``sequential/run_all`` and the parallel profiles.
+
+        The core returns the combined verdict with §7.3 unions applied,
+        plus ``consult`` (combined is a liftable deny the profile says
+        to consult — environment checks stay here) and
+        ``apply_transform`` (parallel-only single winning transform,
+        not yet applied)."""
+        agg = json.loads(
+            _core.compose_aggregate(
+                dumps(self._composition.to_wire()), dumps([v.to_wire() for v in all_v])
+            )
+        )
+        combined = Verdict._from_core(agg["combined"])
+        decided_by: int | None = agg["decided_by"]
+        verdicts = tuple(VerdictSummary.from_wire(s) for s in agg["verdicts"])
+        resolved_by: str | None = None
+
+        if agg["apply_transform"]:
+            # §7.5: apply the single winning transform now.
+            folded = self._fold_transform(ctx, combined)
+            if not folded.decision.permits:
+                return _Outcome(folded, None, verdicts)
+            combined = folded
+        elif agg["consult"]:
+            consultation = await self._consult(ctx, combined)
+            if consultation is not None:
+                # Whether the consulted deny was host-synthesized (§7.5
+                # transform conflict / unanimous disagreement) or an
+                # interceptor's own liftable deny.
+                synthesized_trigger = _is_host_synthesized(combined)
+                rv, permitted = consultation
+                if permitted:
+                    resolved_by = "approval"
+                    sub = (
+                        self._fold_transform(ctx, rv)
+                        if rv.decision is Decision.TRANSFORM
+                        else rv
+                    )
+                    if synthesized_trigger:
+                        # §7.6: `decided_by` stays null for a
+                        # synthesized trigger.
+                        combined = sub
+                    elif sub.decision.permits:
+                        combined = _with_unions(sub, [*all_v, sub])
+                    else:
+                        combined = sub  # substituted transform failed closed
+                else:
+                    if synthesized_trigger:
+                        combined = rv
+                    else:
+                        combined = _with_unions(rv, all_v)
+                        if _is_host_synthesized(rv):
+                            decided_by = None
+        return _Outcome(combined, decided_by, verdicts, None, resolved_by)
+
+    # -------------------------------------------------------------------------
 
     def _fold_transform(self, ctx: AgentContext, v: Verdict) -> Verdict:
-        """Apply (enforce) or validate (evaluate_only) one transform (§7.1, §8)."""
-        assert v.transform is not None
+        """Apply (enforce) or validate (evaluate_only) one transform (§7.4, §8)."""
+        if v.transform is None:
+            return Verdict.host_error(HostError.TRANSFORM_INVALID)
         try:
             if self._mode is EnforcementMode.ENFORCE:
                 new_ctx = json.loads(
                     _core.apply_transform_ctx(
-                        json.dumps(ctx), v.transform.path, json.dumps(v.transform.value)
+                        dumps(ctx), v.transform.path, dumps(v.transform.value)
                     )
                 )
                 ctx.clear()
                 ctx.update(new_ctx)
             else:
                 _core.validate_transform_ctx(
-                    json.dumps(ctx), v.transform.path, json.dumps(v.transform.value)
+                    dumps(ctx), v.transform.path, dumps(v.transform.value)
                 )
         except _core.AgentHooksCoreError as e:
-            return Verdict.host_error(
-                HostError(getattr(e, "code", HostError.TRANSFORM_INVALID.value)), str(e)
-            )
+            return Verdict.host_error(_host_error_of(e, HostError.TRANSFORM_INVALID), str(e))
+        except ValueError as e:
+            return Verdict.host_error(HostError.TRANSFORM_INVALID, str(e))
         return v
 
-    async def _resolve_escalate(
-        self, ip: InterceptionPoint, ctx: AgentContext, verdict: Verdict, identity: str
-    ) -> Verdict:
+    async def _consult(
+        self, ctx: AgentContext, verdict: Verdict
+    ) -> tuple[Verdict, bool] | None:
+        """Consult the approval seam for a liftable deny (§9), when the
+        profile conditions allow it: ``enforce`` mode, not
+        ``agent_shutdown``, a resolver registered, and the verdict
+        actually liftable. Enforces the echo rule and the §9
+        outcome/verdict consistency requirements.
+
+        Returns ``None`` when the seam was not consulted (the liftable
+        deny stands as-is — conformant, not an error), else
+        ``(verdict, permitted)`` where the verdict substitutes for the
+        triggering one (§7.6).
+        """
+        if not verdict.is_liftable or self._mode is not EnforcementMode.ENFORCE:
+            return None
+        # §6.1a: nothing to approve at agent_shutdown.
+        if ctx.get("interception_point") == InterceptionPoint.AGENT_SHUTDOWN.value:
+            return None
+        # §9: no resolver → the deny stands. Conformant, not an error.
         if self._resolver is None:
-            return Verdict.host_error(HostError.APPROVAL_RESOLVER_MISSING)
+            return None
+
+        # §9: identity of the context as presented to the resolver —
+        # consultation time, after any transforms that folded earlier.
+        try:
+            identity = self._compute_identity(ctx)
+        except _core.AgentHooksCoreError as e:
+            return (
+                Verdict.host_error(_host_error_of(e, HostError.CONTEXT_INVALID), str(e)),
+                False,
+            )
+        except Exception as e:  # noqa: BLE001 — provider failure fails closed
+            return Verdict.host_error(HostError.CONTEXT_INVALID, type(e).__name__), False
+
+        try:
+            ip = InterceptionPoint(ctx.get("interception_point"))
+        except ValueError:
+            ip = InterceptionPoint.AGENT_STARTUP
         try:
             raw = self._resolver.resolve(
                 ApprovalRequest(
@@ -245,17 +680,42 @@ class InterceptionEmitter:
             else:
                 res = raw
         except (TimeoutError, asyncio.TimeoutError):
-            return Verdict.host_error(HostError.APPROVAL_RESOLVER_FAILED, "timeout")
+            return Verdict.host_error(HostError.APPROVAL_RESOLVER_FAILED, "timeout"), False
         except Exception as e:  # noqa: BLE001
-            return Verdict.host_error(HostError.APPROVAL_RESOLVER_FAILED, type(e).__name__)
+            return (
+                Verdict.host_error(HostError.APPROVAL_RESOLVER_FAILED, type(e).__name__),
+                False,
+            )
+
+        # §9 echo rule (byte-for-byte; None echoes as None).
         if res.context_identity != identity:
-            return Verdict.host_error(HostError.APPROVAL_ACTION_MISMATCH)
+            return Verdict.host_error(HostError.APPROVAL_IDENTITY_MISMATCH), False
         if res.outcome is ApprovalOutcome.UNRESOLVED or res.verdict is None:
-            return Verdict.host_error(HostError.APPROVAL_UNRESOLVED)
+            return Verdict.host_error(HostError.APPROVAL_UNRESOLVED), False
         try:
-            # §9/N04: the resolver's verdict crosses the same §5 gate as
-            # an interceptor's.
-            _core.validate_verdict(json.dumps(res.verdict.to_wire()))
-        except _core.AgentHooksCoreError as e:
-            return Verdict.host_error(HostError.VERDICT_INVALID, str(e))
-        return res.verdict
+            # §9: the resolver's verdict crosses the same §5 gate as an
+            # interceptor's.
+            rv = Verdict.from_wire(
+                json.loads(_core.validate_verdict(dumps(res.verdict.to_wire())))
+            )
+        except Exception as e:  # noqa: BLE001
+            return Verdict.host_error(HostError.VERDICT_INVALID, str(e)), False
+        # §9: outcome/decision must agree — approve MUST carry a permit,
+        # reject MUST carry a deny.
+        if res.outcome is ApprovalOutcome.APPROVE:
+            if not rv.decision.permits:
+                return (
+                    Verdict.host_error(
+                        HostError.VERDICT_INVALID, "approve MUST carry a permit verdict (§9)"
+                    ),
+                    False,
+                )
+            return rv, True
+        if rv.decision is not Decision.DENY:
+            return (
+                Verdict.host_error(
+                    HostError.VERDICT_INVALID, "reject MUST carry a deny verdict (§9)"
+                ),
+                False,
+            )
+        return rv, False

@@ -26,7 +26,7 @@ class InterceptionBlocked(RuntimeError):
 
 
 class InterceptionSuspended(RuntimeError):
-    """Raised by a host when an ``escalate`` verdict awaits out-of-band approval (§9).
+    """Raised by a host when a liftable deny awaits out-of-band approval (§9).
 
     Hosts that resolve approval synchronously never raise this; hosts that
     defer to an external workflow raise it so the caller can persist the

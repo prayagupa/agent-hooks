@@ -20,11 +20,13 @@ public sealed class ReferenceHarness : IHarness
 
     public void Setup(
         Scenario scenario, IReadOnlyList<IInterceptor> interceptors,
-        IApprovalResolver? resolver, EnforcementMode mode)
+        IApprovalResolver? resolver, EnforcementMode mode,
+        CompositionConfig composition)
     {
         _scenario = scenario;
         _toolLog.Clear();
         var em = new InterceptionEmitter(mode, resolver);
+        em.SetComposition(composition);
         foreach (var i in interceptors) em.Register(i);
         _emitter = em;
         _builder = new AgentContextBuilder(

@@ -93,13 +93,15 @@ public sealed record Scenario(
     }
 }
 
-/// <summary>What <see cref="IHarness.RunAsync"/> returns to the CTK runner.</summary>
+/// <summary>What <see cref="IHarness.RunAsync"/> returns to the CTK runner.
+/// Identity pairs are <c>null</c>-valued when the identity provider is
+/// <c>null</c> (§10.1).</summary>
 public sealed record RunRecord(
     RunOutcome Outcome,
     JsonNode? FinalOutput,
     IReadOnlyList<JsonObject> ToolInvocations,
     string? Error = null,
-    IReadOnlyList<(string InputIdentity, string EnforcedIdentity)>? Identities = null);
+    IReadOnlyList<(string? InputIdentity, string? EnforcedIdentity)>? Identities = null);
 
 /// <summary>The single interface a framework adapter implements for the CTK.</summary>
 public interface IHarness
@@ -107,11 +109,15 @@ public interface IHarness
     string Name { get; }
     IReadOnlySet<Capability> Capabilities { get; }
 
+    /// <summary>Wire the scenario's mock model + tools into the framework,
+    /// register the interceptors and resolver, set the enforcement mode
+    /// and the vector's composition profile (§7.1).</summary>
     void Setup(
         Scenario scenario,
         IReadOnlyList<IInterceptor> interceptors,
         IApprovalResolver? resolver,
-        EnforcementMode mode);
+        EnforcementMode mode,
+        CompositionConfig composition);
 
     Task<RunRecord> RunAsync(CancellationToken ct = default);
 

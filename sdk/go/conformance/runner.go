@@ -89,9 +89,9 @@ func runRecordToWire(rr RunRecord) string {
 	for i, t := range rr.ToolInvocations {
 		invs[i] = map[string]any{"name": t.Name, "args": t.Args}
 	}
-	ids := make([]map[string]string, len(rr.Identities))
+	ids := make([]map[string]any, len(rr.Identities))
 	for i, p := range rr.Identities {
-		ids[i] = map[string]string{
+		ids[i] = map[string]any{
 			"input_identity":    p.InputIdentity,
 			"enforced_identity": p.EnforcedIdentity,
 		}
@@ -155,8 +155,17 @@ func RunVector(ctx context.Context, h Harness, vector map[string]any) (VectorRes
 	if m, _ := vector["mode"].(string); m != "" {
 		mode = agenthooks.EnforcementMode(m)
 	}
+	// §13.2: composition vectors carry the profile/knobs they apply to;
+	// absent means the pre-P-003 default (sequential/first_deny, stop).
+	composition := agenthooks.DefaultComposition()
+	if c, ok := vector["composition"].(map[string]any); ok {
+		var cc agenthooks.CompositionConfig
+		if err := json.Unmarshal([]byte(mustJSON(c)), &cc); err == nil && cc.Profile != "" {
+			composition = cc
+		}
+	}
 
-	if err := h.Setup(scenario, interceptors, resolver, mode); err != nil {
+	if err := h.Setup(scenario, interceptors, resolver, mode, composition); err != nil {
 		return VectorResult{ID: id, Title: title, Status: "fail",
 			Failures: []string{fmt.Sprintf("harness.Setup: %v", err)}}, nil
 	}

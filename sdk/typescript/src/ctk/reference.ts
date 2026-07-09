@@ -12,6 +12,7 @@ import { randomUUID } from "node:crypto";
 
 import {
   ApprovalResolver,
+  CompositionConfig,
   EnforcementMode,
   Interceptor,
   InterceptionBlocked,
@@ -37,10 +38,12 @@ export class ReferenceHarness implements Harness {
     interceptors: Interceptor[],
     resolver: ApprovalResolver | null,
     mode: EnforcementMode,
+    composition: CompositionConfig,
   ): void {
     this.scenario = scenario;
     this.toolLog = [];
     const em = new InterceptionEmitter(mode, resolver);
+    em.setComposition(composition);
     for (const i of interceptors) em.register(i);
     this.emitter = em;
     this.builder = new AgentContextBuilder({
@@ -132,7 +135,9 @@ export class ReferenceHarness implements Harness {
       outcome,
       final_output: final,
       tool_invocations: this.toolLog,
-      identities: em.records.map((r) => [r.input_identity, r.enforced_identity] as [string, string]),
+      identities: em.records.map(
+        (r) => [r.input_identity, r.enforced_identity] as [string | null, string | null],
+      ),
     };
   }
 

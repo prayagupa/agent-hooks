@@ -123,19 +123,31 @@ func nativeValidateTransformCtx(ctxJSON, path, valueJSON string) (string, error)
 }
 
 // nativeFinalize builds the InterceptionRecord for one completed
-// interception (§6/§10). inputIdentity MUST have been computed from the
-// context before interceptor dispatch.
-// decidedBy: registration index of the deciding interceptor; -1 = none.
-func nativeFinalize(ctxJSON, verdictJSON, mode, inputIdentity string, decidedBy int64) (string, error) {
+// emission (§10.3). optionsJSON carries {input_identity?,
+// identity_provider?, enforced_identity?, decided_by?, composition,
+// verdicts?, fold_truncated?, resolved_by?}; input_identity MUST have
+// been computed from the context before interceptor dispatch.
+func nativeFinalize(ctxJSON, verdictJSON, mode, optionsJSON string) (string, error) {
 	cc, fc := cstr(ctxJSON)
 	defer fc()
 	cv, fv := cstr(verdictJSON)
 	defer fv()
 	cm, fm := cstr(mode)
 	defer fm()
-	ci, fi := cstr(inputIdentity)
-	defer fi()
-	return unwrap(C.ah_finalize(cc, cv, cm, ci, C.int64_t(decidedBy)))
+	co, fo := cstr(optionsJSON)
+	defer fo()
+	return unwrap(C.ah_finalize(cc, cv, cm, co))
+}
+
+// nativeComposeAggregate runs the §7.3/§7.5 severity-max aggregation for
+// the multi-verdict composition profiles. Returns {combined, decided_by,
+// consult, apply_transform, verdicts}.
+func nativeComposeAggregate(compositionJSON, verdictsJSON string) (string, error) {
+	cc, fc := cstr(compositionJSON)
+	defer fc()
+	cv, fv := cstr(verdictsJSON)
+	defer fv()
+	return unwrap(C.ah_compose_aggregate(cc, cv))
 }
 
 // ---- CTK engine (§13.2) ---------------------------------------------------

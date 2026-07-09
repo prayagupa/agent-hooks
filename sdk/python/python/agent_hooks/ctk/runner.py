@@ -22,12 +22,30 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from agent_hooks import _core
+from agent_hooks._marshal import dumps
 from agent_hooks._types import EnforcementMode
+from agent_hooks.composition import CompositionConfig
 from agent_hooks.ctk.harness import Harness, RunRecord, Scenario
 from agent_hooks.ctk.scripted import (
     RecordingInterceptor,
     ScriptedInterceptor,
     ScriptedResolver,
+)
+
+#: TODO(stage-4): vectors still authored in the pre-P-003 five-verdict
+#: wire vocabulary (``warn``, ``escalate``, ``approval_resolver_missing``).
+#: Stage 4 rewrites them to the three-verdict shapes (§5.1); until then
+#: they are stale and skipped here — and ONLY here. Mirrors the Rust
+#: exclusion list in ``sdk/rust/core/tests/ctk_reference.rs``.
+TODO_STAGE_4: frozenset[str] = frozenset(
+    {
+        "AH-CTK-030",  # escalate-approve → deny+approval / resolution
+        "AH-CTK-031",  # escalate-reject → deny+approval / reject
+        "AH-CTK-032",  # escalate-no-resolver → liftable deny stands (§9)
+        "AH-CTK-050",  # warn-passthrough → allow+warnings
+        "AH-CTK-072",  # resolver-identity-mismatch → echo rule via seam
+        "AH-CTK-073",  # resolver-raises → approval_resolver_failed via seam
+    }
 )
 
 
@@ -46,7 +64,7 @@ def load_vectors(directory: str | pathlib.Path) -> list[dict[str, Any]]:
 
 
 def _run_record_to_wire(rr: RunRecord) -> str:
-    return json.dumps(
+    return dumps(
         {
             "outcome": rr.outcome.value,
             "final_output": rr.final_output,
@@ -61,15 +79,19 @@ def _run_record_to_wire(rr: RunRecord) -> str:
 
 async def run_vector(harness: Harness, vector: dict[str, Any]) -> VectorResult:
     vid, title = vector["id"], vector["title"]
-    vector_json = json.dumps(vector)
+    if vid in TODO_STAGE_4:
+        return VectorResult(
+            vid, title, "skip", detail="TODO(stage-4): stale pre-P-003 vector, rewritten in stage 4"
+        )
+    vector_json = dumps(vector)
 
-    caps_json = json.dumps(sorted(c.value for c in harness.capabilities))
+    caps_json = dumps(sorted(c.value for c in harness.capabilities))
     skip = json.loads(_core.ctk_should_skip(vector_json, caps_json))
     if skip is not None:
         return VectorResult(vid, title, "skip", detail=skip)
 
     scenario = Scenario.from_wire(vector["scenario"])
-    # Multi-interceptor vectors (§7.1 fold-through) use interceptor_scripts;
+    # Multi-interceptor vectors (§7.4 fold-through) use interceptor_scripts;
     # single-interceptor vectors use interceptor_script. Only the FIRST
     # interceptor records: expect.interceptions describes each emission as
     # the first-registered interceptor saw it.
@@ -82,8 +104,11 @@ async def run_vector(harness: Harness, vector: dict[str, Any]) -> VectorResult:
     approval = vector.get("approval_script")
     resolver = ScriptedResolver(approval) if approval else None
     mode = EnforcementMode(vector.get("mode", "enforce"))
+    # §13.2: composition vectors carry the profile/knobs they apply to;
+    # absent means the pre-P-003 default (§7.2).
+    composition = CompositionConfig.from_wire(vector.get("composition"))
 
-    harness.setup(scenario, interceptors, resolver, mode)
+    harness.setup(scenario, interceptors, resolver, mode, composition)
     try:
         rr = await harness.run()
     except Exception as e:  # noqa: BLE001
@@ -94,7 +119,7 @@ async def run_vector(harness: Harness, vector: dict[str, Any]) -> VectorResult:
     result = json.loads(
         _core.ctk_assert(
             vector_json,
-            json.dumps(first.recorded if first else []),
+            dumps(first.recorded if first else []),
             _run_record_to_wire(rr),
         )
     )

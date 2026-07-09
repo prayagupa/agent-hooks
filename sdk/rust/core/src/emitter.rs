@@ -501,6 +501,7 @@ impl InterceptionEmitter {
                         HostError::TransformConflict,
                         detail,
                         policy,
+                        &all,
                         &mut resolved_by,
                     )
                     .await;
@@ -631,6 +632,7 @@ impl InterceptionEmitter {
                 HostError::CompositionDisagreement,
                 "non-unanimous outcome under parallel/unanimous".into(),
                 policy,
+                &all,
                 &mut resolved_by,
             )
             .await;
@@ -652,23 +654,37 @@ impl InterceptionEmitter {
         err: HostError,
         detail: String,
         policy: SynthesisPolicy,
+        pool: &[Verdict],
         resolved_by: &mut Option<&'static str>,
     ) -> Verdict {
         match policy {
-            SynthesisPolicy::Deny => Verdict::host_error(err, Some(detail)),
+            SynthesisPolicy::Deny => {
+                with_unions(Verdict::host_error(err, Some(detail)), pool)
+            }
             SynthesisPolicy::Approval => {
                 let liftable = Verdict::host_error_liftable(err, Some(detail));
                 match self.consult(ctx, &liftable).await {
-                    Consultation::NotConsulted => liftable,
+                    Consultation::NotConsulted => with_unions(liftable, pool),
                     Consultation::Substituted { verdict, permitted } => {
                         let verdict = *verdict;
                         if permitted {
                             *resolved_by = Some("approval");
-                            if verdict.decision == Decision::Transform {
-                                return self.fold_transform(ctx, verdict);
+                            let sub = if verdict.decision == Decision::Transform {
+                                self.fold_transform(ctx, verdict)
+                            } else {
+                                verdict
+                            };
+                            // §7.3 step 2: the substituting resolution
+                            // carries the emission's unions, like every
+                            // other combined verdict.
+                            if sub.decision.permits() {
+                                let mut with_sub = pool.to_vec();
+                                with_sub.push(sub.clone());
+                                return with_unions(sub, &with_sub);
                             }
+                            return sub;
                         }
-                        verdict
+                        with_unions(verdict, pool)
                     }
                 }
             }

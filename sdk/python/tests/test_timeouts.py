@@ -29,7 +29,8 @@ class FastInterceptor:
 
 class EscalatingInterceptor:
     def intercept(self, context: dict[str, Any]) -> dict[str, Any]:
-        return {"decision": "escalate", "reason": "test"}
+        # §5.1: a liftable deny (what earlier drafts called escalate).
+        return {"decision": "deny", "approval": {}, "reason": "test"}
 
 
 class SlowResolver:

@@ -2,18 +2,21 @@
   "$id": "https://agent-hooks.responsibleai.dev/v0.1/approval.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Agent Hooks — approval seam",
-  "description": "Approval request and resolution shapes for the escalate verdict (AGENT-HOOKS-0.1 §9).",
+  "description": "Approval request and resolution shapes for lifting a liftable deny (AGENT-HOOKS-0.1 §9). context_identity is an opaque provider-produced string, or null when identity_provider is null (§10.1); the only normative constraint is the echo rule.",
   "$defs": {
     "request": {
       "type": "object",
       "additionalProperties": false,
       "required": ["context_identity", "interception_point", "verdict"],
       "properties": {
-        "context_identity": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "context_identity": { "type": ["string", "null"] },
         "interception_point": { "$ref": "interception-point.schema.json" },
-        "verdict": { "$ref": "verdict.schema.json" },
+        "verdict": {
+          "description": "The liftable deny (deny with an approval block) being consulted, or the host-synthesized liftable deny (§7.5).",
+          "$ref": "verdict.schema.json"
+        },
         "context": {
-          "description": "The AgentContext that produced the escalate verdict. MAY be redacted per host policy.",
+          "description": "The AgentContext as presented to the resolver. MAY be redacted per host policy.",
           "$ref": "agent-context.schema.json"
         }
       }
@@ -24,7 +27,10 @@
       "required": ["outcome", "context_identity"],
       "properties": {
         "outcome": { "type": "string", "enum": ["approve", "reject", "unresolved"] },
-        "context_identity": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "context_identity": {
+          "type": ["string", "null"],
+          "description": "MUST equal the request's context_identity byte for byte (echo rule, §9); null echoes as null."
+        },
         "verdict": { "$ref": "verdict.schema.json" }
       },
       "allOf": [
@@ -38,7 +44,7 @@
           "then": {
             "properties": {
               "verdict": {
-                "properties": { "decision": { "enum": ["allow", "warn", "transform"] } }
+                "properties": { "decision": { "enum": ["allow", "transform"] } }
               }
             }
           }

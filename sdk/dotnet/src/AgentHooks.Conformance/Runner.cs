@@ -75,7 +75,13 @@ public static class Runner
         var mode = (string?)vector["mode"] == "evaluate_only"
             ? EnforcementMode.EvaluateOnly : EnforcementMode.Enforce;
 
-        harness.Setup(scenario, interceptors, resolver, mode);
+        // §13.2: composition vectors carry the profile/knobs they apply
+        // to; absent means the pre-P-003 default.
+        var composition = vector["composition"] is JsonObject co
+            ? CompositionConfig.FromWire(co)
+            : CompositionConfig.Default;
+
+        harness.Setup(scenario, interceptors, resolver, mode, composition);
         RunRecord rr;
         try
         {
@@ -124,6 +130,11 @@ public static class Runner
         return o.ToJsonString(Compact);
     }
 
+    /// <summary>A §5-invalid verdict shape (transform decision, no body)
+    /// used to surface scripted stale wire vocabulary through the §5 gate
+    /// (fail closed into <c>host_error:verdict_invalid</c>).</summary>
+    private static Verdict InvalidVerdict() => new(Decision.Transform);
+
     /// <summary>Replays one interceptor rule list via the Rust core.</summary>
     private class ScriptedInterceptor(string rulesJson) : IInterceptor
     {
@@ -139,7 +150,17 @@ public static class Runner
                 // NOW-10 fault injection: exercise §6.3 interceptor_failed.
                 throw new InvalidOperationException("ctk scripted fault: raise");
             }
-            return ValueTask.FromResult(Verdict.FromWire(w));
+            try
+            {
+                return ValueTask.FromResult(Verdict.FromWire(w));
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                // TODO(stage-4): pre-P-003 vectors still script `warn` /
+                // `escalate`; the closed set is three (§5.1), so the
+                // stale shape fails the §5 gate (fail closed).
+                return ValueTask.FromResult(InvalidVerdict());
+            }
         }
     }
 
@@ -161,9 +182,12 @@ public static class Runner
         public ValueTask<ApprovalResolution> ResolveAsync(
             ApprovalRequest req, CancellationToken ct = default)
         {
+            // §10.1: identity may be null (null provider). The scripted
+            // engine works in strings; "" round-trips to null below.
             var r = (JsonObject)JsonNode.Parse(
                 Native.CtkScriptedResolve(
-                    rulesJson, req.Context.Json.ToJsonString(Compact), req.ContextIdentity))!;
+                    rulesJson, req.Context.Json.ToJsonString(Compact),
+                    req.ContextIdentity ?? ""))!;
             if (r.ContainsKey("__ctk_fault__"))
             {
                 // NOW-10 fault injection: exercise §9 approval_resolver_failed.
@@ -175,9 +199,21 @@ public static class Runner
                 "reject" => ApprovalOutcome.Reject,
                 _ => ApprovalOutcome.Unresolved,
             };
-            var v = r["verdict"] is JsonObject vw ? Verdict.FromWire(vw) : null;
-            return ValueTask.FromResult(
-                new ApprovalResolution(outcome, (string)r["context_identity"]!, v));
+            Verdict? v;
+            try
+            {
+                v = r["verdict"] is JsonObject vw ? Verdict.FromWire(vw) : null;
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                // TODO(stage-4): stale wire vocabulary fails the §5 gate.
+                v = InvalidVerdict();
+            }
+            var echoed = (string?)r["context_identity"] ?? "";
+            return ValueTask.FromResult(new ApprovalResolution(
+                outcome,
+                echoed.Length == 0 && req.ContextIdentity is null ? null : echoed,
+                v));
         }
     }
 }

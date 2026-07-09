@@ -78,11 +78,18 @@ fn finalize(
     ctx_json: &str,
     verdict_json: &str,
     mode: &str,
-    input_identity: &str,
-    decided_by: i64,
+    options_json: &str,
 ) -> PyResult<String> {
-    core::finalize(ctx_json, verdict_json, mode, input_identity, decided_by)
-        .map_err(|e| map_err(py, e))
+    core::finalize(ctx_json, verdict_json, mode, options_json).map_err(|e| map_err(py, e))
+}
+
+#[pyfunction]
+fn compose_aggregate(
+    py: Python<'_>,
+    composition_json: &str,
+    verdicts_json: &str,
+) -> PyResult<String> {
+    core::compose_aggregate(composition_json, verdicts_json).map_err(|e| map_err(py, e))
 }
 
 // ---- CTK engine (§13.2) ---------------------------------------------------
@@ -133,6 +140,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(apply_transform_ctx, m)?)?;
     m.add_function(wrap_pyfunction!(validate_transform_ctx, m)?)?;
     m.add_function(wrap_pyfunction!(finalize, m)?)?;
+    m.add_function(wrap_pyfunction!(compose_aggregate, m)?)?;
     m.add_function(wrap_pyfunction!(ctk_scripted_intercept, m)?)?;
     m.add_function(wrap_pyfunction!(ctk_scripted_resolve, m)?)?;
     m.add_function(wrap_pyfunction!(ctk_should_skip, m)?)?;

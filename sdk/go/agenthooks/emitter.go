@@ -3,44 +3,121 @@
 
 package agenthooks
 
-// Host-side emitter: dispatch context → interceptors → verdict → record
-// (§6–§9).
+// Host-side emitter: dispatch context → interceptors → composition →
+// combined verdict → record (§6–§10).
 //
-// Per-language orchestrator over the Rust core. Interceptor dispatch (§7)
-// and approval-seam resolution (§9) stay here because they call back into
-// user Go code. Verdict validation (§5), transform fold-through (§7.1),
-// identity computation (§10), and target write-back (§4.3) delegate to
-// the core so behaviour is byte-identical across SDKs.
+// Per-language orchestrator over the Rust core. Interceptor dispatch
+// (§7) and approval-seam resolution (§9) stay here because they call
+// back into user Go code. Verdict validation (§5), transform
+// fold-through (§7.4), multi-verdict aggregation (§7.3/§7.5 via
+// ah_compose_aggregate), identity computation (§10), record assembly
+// (§10.3), and target write-back (§4.3) delegate to the core so
+// behaviour is byte-identical across SDKs.
 //
-// §7.1 sequential fold-through: interceptors run in registration order;
-// each receives a deep copy of the context as it stands *after* prior
-// transforms were applied, so an earlier interceptor's redaction is
-// visible to later ones. The first block verdict short-circuits.
+// Composition is host configuration (§7.1): the profile is set on the
+// emitter (default sequential/first_deny, on_approval: stop) and
+// recorded on every emission. "Parallel" profiles are implemented with
+// serial dispatch over isolated snapshots — §7.2: parallel names
+// isolation semantics, not scheduling.
 //
 // Fail-closed defaults: an enforce-mode emission with zero registered
 // interceptors yields deny host_error:no_interceptor (§7), and Emit
-// returns InterceptionBlocked on any block — the ignorable-result
+// returns InterceptionBlocked on any block — the ignorable-record
 // variant is the explicitly named EmitUnchecked.
 
 import (
-	"strings"
-	"sync"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
+	"sync"
 	"time"
 )
 
 // DefaultTimeout is the §7 RECOMMENDED interceptor/resolver timeout.
 const DefaultTimeout = 5000 * time.Millisecond
 
-// InterceptionEmitter implements §6–§9 once so adapters do not have to.
+// IdentityProvider is the host-declared identity provider (§10.1). A
+// nil *IdentityProvider is the null provider: approvals bind by
+// correlation only; records carry null identities and self-describe as
+// unbound.
+type IdentityProvider struct {
+	// Name is the declared provider name (§10.1); ignored (reported as
+	// JCSSHA256) when Compute is nil.
+	Name string
+	// Compute is the host-supplied pure function for a custom
+	// provider. nil selects the shipped jcs-sha256 default (§10.2),
+	// computed by the Rust core. The echo and record rules (§10.1)
+	// apply to custom providers too; the golden vectors do not.
+	Compute func(AgentContext) (string, error)
+}
+
+// DefaultIdentityProvider returns the shipped §10.2 jcs-sha256 provider.
+func DefaultIdentityProvider() *IdentityProvider {
+	return &IdentityProvider{Name: JCSSHA256}
+}
+
+// name returns the declared provider name; nil for the null provider.
+func (p *IdentityProvider) name() *string {
+	if p == nil {
+		return nil
+	}
+	n := p.Name
+	if p.Compute == nil {
+		n = JCSSHA256
+	}
+	return &n
+}
+
+// compute returns the provider's identity for actx; (nil, nil) for the
+// null provider. The default provider fails closed
+// (host_error:context_invalid) on a non-I-JSON projection (§10.2).
+func (p *IdentityProvider) compute(actx AgentContext) (*string, error) {
+	if p == nil {
+		return nil, nil
+	}
+	if p.Compute != nil {
+		s, err := p.Compute(actx)
+		if err != nil {
+			return nil, err
+		}
+		return &s, nil
+	}
+	b, err := json.Marshal(map[string]any(actx))
+	if err != nil {
+		return nil, err
+	}
+	s, err := nativeContextIdentity(string(b))
+	if err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
+// isHostSynthesized reports whether a verdict was synthesized by the
+// host (§11) rather than returned by an interceptor or resolver.
+func isHostSynthesized(v Verdict) bool {
+	return strings.HasPrefix(v.Reason, "host_error:")
+}
+
+// dispatchOutcome is the internal result of one profile dispatch.
+type dispatchOutcome struct {
+	combined      Verdict
+	decidedBy     *int
+	verdicts      []VerdictSummary
+	foldTruncated *bool
+	resolvedBy    *string
+}
+
+// InterceptionEmitter implements §6–§10 once so adapters do not have to.
 // One instance per session.
 type InterceptionEmitter struct {
 	interceptors []Interceptor
 	resolver     ApprovalResolver
 	mode         EnforcementMode
+	composition  CompositionConfig
+	identity     *IdentityProvider
 
 	// Timeout bounds each interceptor OnHook and resolver Resolve call
 	// (§7, RECOMMENDED default 5000 ms); breach fails closed with
@@ -100,13 +177,38 @@ func (e *InterceptionEmitter) Records() []InterceptionRecord {
 }
 
 // NewInterceptionEmitter constructs an emitter in the given mode with an
-// optional approval resolver.
+// optional approval resolver, the default composition profile
+// (sequential/first_deny, on_approval: stop) and the default jcs-sha256
+// identity provider.
 func NewInterceptionEmitter(mode EnforcementMode, resolver ApprovalResolver) *InterceptionEmitter {
-	return &InterceptionEmitter{mode: mode, resolver: resolver, Timeout: DefaultTimeout}
+	return &InterceptionEmitter{
+		mode:        mode,
+		resolver:    resolver,
+		composition: DefaultComposition(),
+		identity:    DefaultIdentityProvider(),
+		Timeout:     DefaultTimeout,
+	}
 }
 
 // Mode returns the enforcement mode.
 func (e *InterceptionEmitter) Mode() EnforcementMode { return e.mode }
+
+// SetComposition declares the composition profile for subsequent
+// emissions (§7.1). An empty profile resets to the default.
+func (e *InterceptionEmitter) SetComposition(c CompositionConfig) *InterceptionEmitter {
+	if c.Profile == "" {
+		c = DefaultComposition()
+	}
+	e.composition = c
+	return e
+}
+
+// SetIdentityProvider declares the identity provider (§10.1); nil is
+// the null provider (identity-unbound records and approvals).
+func (e *InterceptionEmitter) SetIdentityProvider(p *IdentityProvider) *InterceptionEmitter {
+	e.identity = p
+	return e
+}
 
 // Register appends an interceptor and returns the emitter for chaining.
 func (e *InterceptionEmitter) Register(i Interceptor) *InterceptionEmitter {
@@ -114,8 +216,8 @@ func (e *InterceptionEmitter) Register(i Interceptor) *InterceptionEmitter {
 	return e
 }
 
-// Emit runs the interception and returns InterceptionBlocked as the
-// error if the guarded action must not proceed (§6). This is the primary
+// Emit runs the emission and returns InterceptionBlocked as the error
+// if the guarded action must not proceed (§6). This is the primary
 // entry point; the safe path is the default.
 func (e *InterceptionEmitter) Emit(ctx context.Context, actx AgentContext) (InterceptionRecord, error) {
 	rec, err := e.EmitUnchecked(ctx, actx)
@@ -128,7 +230,7 @@ func (e *InterceptionEmitter) Emit(ctx context.Context, actx AgentContext) (Inte
 	return rec, nil
 }
 
-// EmitUnchecked runs the interception and returns the record without a
+// EmitUnchecked runs the emission and returns the record without a
 // block error. The caller MUST inspect InterceptionRecord.Proceeds and
 // halt the guarded action itself; prefer Emit.
 //
@@ -137,58 +239,49 @@ func (e *InterceptionEmitter) Emit(ctx context.Context, actx AgentContext) (Inte
 // transformed value. A non-nil error is an infrastructure failure only
 // (JSON marshalling or core invocation), never a verdict outcome.
 func (e *InterceptionEmitter) EmitUnchecked(ctx context.Context, actx AgentContext) (InterceptionRecord, error) {
-	// §10.2: input identity binds to the context BEFORE dispatch, so
+	// §10.3: input identity binds to the context BEFORE dispatch, so
 	// neither interceptor mutation nor fold-through can retroactively
 	// alter what the record claims was evaluated.
-	ctxJSON, err := json.Marshal(map[string]any(actx))
+	inputID, idErr := e.identity.compute(actx)
+	var outcome dispatchOutcome
+	if idErr != nil {
+		// §10.2: the provider rejected the value domain (or a custom
+		// provider failed). Fail closed before any interceptor runs.
+		outcome = dispatchOutcome{combined: coreErrVerdict(idErr, ErrContextInvalid)}
+	} else {
+		outcome = e.dispatch(ctx, actx)
+	}
+
+	opts := map[string]any{
+		"input_identity":    inputID,
+		"identity_provider": e.identity.name(),
+		"decided_by":        outcome.decidedBy,
+		"composition":       e.composition,
+		"verdicts":          outcome.verdicts,
+		"fold_truncated":    outcome.foldTruncated,
+		"resolved_by":       outcome.resolvedBy,
+	}
+	if e.identity != nil && e.identity.Compute != nil {
+		// Custom providers only: finalize cannot invoke the host
+		// function, so pass the post-composition identity explicitly
+		// (§10.3). The default provider's is computed core-side.
+		if enforcedID, err := e.identity.Compute(actx); err == nil {
+			opts["enforced_identity"] = enforcedID
+		}
+	}
+	optsJSON, err := json.Marshal(opts)
 	if err != nil {
 		return InterceptionRecord{}, err
 	}
-	inputID, err := nativeContextIdentity(string(ctxJSON))
-	if err != nil {
-		return InterceptionRecord{}, err
-	}
-
-	verdict, decidedBy := e.dispatch(ctx, actx)
-
-	// §6.1a: nothing to approve at agent_shutdown.
-	if verdict.Decision == Escalate && e.mode == Enforce && actx.InterceptionPoint() != AgentShutdown {
-		// §9/NOW-14: approval binds to the escalation-time identity
-		// (post prior fold transforms) — what the resolver actually sees.
-		escCtxJSON, mErr := json.Marshal(map[string]any(actx))
-		if mErr != nil {
-			return InterceptionRecord{}, mErr
-		}
-		escalationID, iErr := nativeContextIdentity(string(escCtxJSON))
-		if iErr != nil {
-			return InterceptionRecord{}, iErr
-		}
-		verdict = e.resolveEscalate(ctx, actx.InterceptionPoint(), actx, verdict, escalationID)
-		// An approve MAY carry a transform (§9); it is subject to the
-		// same fold rules as an interceptor transform.
-		if verdict.Decision == Transform {
-			verdict = e.foldTransform(actx, verdict)
-		}
-		// A resolver-substituted verdict keeps the escalating
-		// interceptor's index; host-synthesized failures do not.
-		if strings.HasPrefix(verdict.Reason, "host_error:") {
-			decidedBy = nil
-		}
-	}
-
 	finalCtxJSON, err := json.Marshal(map[string]any(actx))
 	if err != nil {
 		return InterceptionRecord{}, err
 	}
-	verdictJSON, err := json.Marshal(verdict)
+	verdictJSON, err := json.Marshal(outcome.combined)
 	if err != nil {
 		return InterceptionRecord{}, err
 	}
-	decidedByWire := int64(-1)
-	if decidedBy != nil {
-		decidedByWire = int64(*decidedBy)
-	}
-	recJSON, err := nativeFinalize(string(finalCtxJSON), string(verdictJSON), string(e.mode), inputID, decidedByWire)
+	recJSON, err := nativeFinalize(string(finalCtxJSON), string(verdictJSON), string(e.mode), string(optsJSON))
 	if err != nil {
 		return InterceptionRecord{}, err
 	}
@@ -202,84 +295,298 @@ func (e *InterceptionEmitter) EmitUnchecked(ctx context.Context, actx AgentConte
 	return rec, nil
 }
 
-// dispatch invokes interceptors in registration order with §7.1
-// sequential fold-through. Every failure becomes a host_error deny
-// verdict (§6.3); dispatch never returns an error.
-// dispatch returns the combined verdict and the registration index of
-// the deciding interceptor (nil for pure allow or host-synthesized).
-func (e *InterceptionEmitter) dispatch(ctx context.Context, actx AgentContext) (Verdict, *int) {
+// -----------------------------------------------------------------------------
+
+// dispatch runs the declared profile (§7.4–§7.5). Every failure becomes
+// a host_error deny verdict (§6.3); dispatch never returns an error.
+func (e *InterceptionEmitter) dispatch(ctx context.Context, actx AgentContext) dispatchOutcome {
 	if len(e.interceptors) == 0 {
-		// §7: zero interceptors fails closed. Register an explicit
-		// allow-all interceptor for a deliberate passthrough.
-		return HostErrorVerdict(ErrNoInterceptor,
-			"register an explicit allow-all interceptor for a deliberate passthrough"), nil
+		// §7: zero interceptors fails closed, profile-independent.
+		// Register an explicit allow-all interceptor for a deliberate
+		// passthrough.
+		return dispatchOutcome{combined: HostErrorVerdict(ErrNoInterceptor,
+			"register an explicit allow-all interceptor for a deliberate passthrough")}
 	}
+	switch e.composition.Profile {
+	case SequentialRunAll:
+		return e.dispatchRunAll(ctx, actx)
+	case ParallelStrictest, ParallelUnanimous:
+		return e.dispatchParallel(ctx, actx)
+	default: // SequentialFirstDeny (and the zero value)
+		return e.dispatchFirstDeny(ctx, actx)
+	}
+}
 
-	combined := AllowVerdict
-	var labels []string
-	var decidedBy *int
-	for icIdx, ic := range e.interceptors {
-		// §7.1/N05: each interceptor gets its own deep copy — an
-		// in-place mutation of the copy cannot alter enforcement.
-		cp, err := DeepCopyContext(actx)
-		if err != nil {
-			return HostErrorVerdict(ErrContextInvalid, err.Error()), nil
-		}
-		v, err, timedOut := callWithTimeout(ctx, e.Timeout,
-			func(c context.Context) (Verdict, error) { return ic.OnHook(c, cp) })
-		if timedOut {
-			return HostErrorVerdict(ErrInterceptorTimeout, ""), nil // §7
-		}
-		if err != nil {
-			return HostErrorVerdict(ErrInterceptorFailed, fmt.Sprintf("%T", err)), nil // §6.3
-		}
-		vb, err := json.Marshal(v)
-		if err != nil {
-			return HostErrorVerdict(ErrInterceptorFailed, fmt.Sprintf("%T", err)), nil
-		}
-		if _, err := nativeValidateVerdict(string(vb)); err != nil { // §5
-			return coreErrVerdict(err, ErrVerdictInvalid), nil
-		}
+// invoke runs one interceptor on its own deep copy of actx under the §7
+// timeout and the §5 wire gate, returning either its (core-normalized)
+// verdict or a host-synthesized deny — never an error.
+func (e *InterceptionEmitter) invoke(ctx context.Context, ic Interceptor, actx AgentContext) Verdict {
+	// §7/N05: each interceptor gets its own deep copy — an in-place
+	// mutation of the copy cannot alter enforcement.
+	cp, err := DeepCopyContext(actx)
+	if err != nil {
+		return HostErrorVerdict(ErrContextInvalid, err.Error())
+	}
+	v, err, timedOut := callWithTimeout(ctx, e.Timeout,
+		func(c context.Context) (Verdict, error) { return ic.OnHook(c, cp) })
+	if timedOut {
+		return HostErrorVerdict(ErrInterceptorTimeout, "") // §7
+	}
+	if err != nil {
+		return HostErrorVerdict(ErrInterceptorFailed, fmt.Sprintf("%T", err)) // §6.3
+	}
+	vb, err := json.Marshal(v)
+	if err != nil {
+		return HostErrorVerdict(ErrInterceptorFailed, fmt.Sprintf("%T", err))
+	}
+	normalized, err := nativeValidateVerdict(string(vb)) // §5
+	if err != nil {
+		return coreErrVerdict(err, ErrVerdictInvalid)
+	}
+	var nv Verdict
+	if err := json.Unmarshal([]byte(normalized), &nv); err != nil {
+		return HostErrorVerdict(ErrVerdictInvalid, err.Error())
+	}
+	return nv
+}
 
-		if !v.Decision.Permits() {
-			idx := icIdx
-			return v, &idx // first block short-circuits (§7.1)
-		}
-		if v.Decision == Transform {
-			v = e.foldTransform(actx, v)
-			if !v.Decision.Permits() { // transform failed closed
-				return v, nil
+// dispatchFirstDeny implements sequential/first_deny (§7.4):
+// fold-through, first deny short-circuits; a liftable deny consults the
+// seam, then stop or resume per the knob.
+//
+// perInterceptor stays index-aligned with registration order (one entry
+// per invoked interceptor, §10.3 summaries); pool additionally holds
+// substituted resolutions for the §7.3 unions.
+func (e *InterceptionEmitter) dispatchFirstDeny(ctx context.Context, actx AgentContext) dispatchOutcome {
+	n := len(e.interceptors)
+	onApproval := e.composition.OnApproval
+	if onApproval == "" {
+		onApproval = OnApprovalStop
+	}
+	var perInterceptor, pool []Verdict
+	var lastTransformIdx *int
+	var lastTransform Verdict
+	var resolvedBy *string
+	truncated := func(i int) *bool { b := i+1 < n; return &b }
+
+	for i, ic := range e.interceptors {
+		v := e.invoke(ctx, ic, actx)
+		perInterceptor = append(perInterceptor, v)
+		pool = append(pool, v)
+		if isHostSynthesized(v) {
+			// §6.3: a malformed verdict fails closed and — in this
+			// profile — short-circuits like any deny.
+			return dispatchOutcome{
+				combined:      withUnions(v, pool),
+				verdicts:      summaries(perInterceptor),
+				foldTruncated: truncated(i),
+				resolvedBy:    resolvedBy,
 			}
-			combined = v
-			idx := icIdx
-			decidedBy = &idx
-		} else if v.Decision == Warn && combined.Decision == Allow {
-			combined = v
-			idx := icIdx
-			decidedBy = &idx
 		}
-		// §7.1 step 5: union permit-verdict labels, first-seen order.
-		for _, l := range v.ResultLabels {
-			seen := false
-			for _, have := range labels {
-				if have == l {
-					seen = true
-					break
+
+		switch v.Decision {
+		case Deny:
+			verdict, consulted, permitted := e.consult(ctx, actx, v)
+			if !consulted {
+				idx := i
+				return dispatchOutcome{
+					combined:      withUnions(v, pool),
+					decidedBy:     &idx,
+					verdicts:      summaries(perInterceptor),
+					foldTruncated: truncated(i),
+					resolvedBy:    resolvedBy,
 				}
 			}
-			if !seen {
-				labels = append(labels, l)
+			if !permitted {
+				// Reject / unresolved / echo violation: a deny stands (§9).
+				var decidedBy *int
+				if !isHostSynthesized(verdict) {
+					idx := i
+					decidedBy = &idx
+				}
+				return dispatchOutcome{
+					combined:      withUnions(verdict, pool),
+					decidedBy:     decidedBy,
+					verdicts:      summaries(perInterceptor),
+					foldTruncated: truncated(i),
+					resolvedBy:    resolvedBy,
+				}
+			}
+			rb := ResolvedByApproval
+			resolvedBy = &rb
+			// §7.6: the permit resolution substitutes at this position;
+			// its transform folds like an interceptor's (§7.4).
+			sub := verdict
+			if sub.Decision == Transform {
+				sub = e.foldTransform(actx, sub)
+			}
+			if !sub.Decision.Permits() {
+				return dispatchOutcome{
+					combined:      sub,
+					verdicts:      summaries(perInterceptor),
+					foldTruncated: truncated(i),
+					resolvedBy:    resolvedBy,
+				}
+			}
+			pool = append(pool, sub)
+			if onApproval == OnApprovalStop {
+				// §7.4 stop: the resolution is the combined verdict;
+				// the emission ends. fold_truncated makes the skip
+				// legible.
+				idx := i
+				return dispatchOutcome{
+					combined:      withUnions(sub, pool),
+					decidedBy:     &idx,
+					verdicts:      summaries(perInterceptor),
+					foldTruncated: truncated(i),
+					resolvedBy:    resolvedBy,
+				}
+			}
+			// resume: fold continues at i+1.
+			if sub.Decision == Transform {
+				idx := i
+				lastTransformIdx, lastTransform = &idx, sub
+			}
+		case Transform:
+			v = e.foldTransform(actx, v)
+			if !v.Decision.Permits() {
+				// Transform failed closed (host-synthesized §5.2).
+				return dispatchOutcome{
+					combined:      v,
+					verdicts:      summaries(perInterceptor),
+					foldTruncated: truncated(i),
+					resolvedBy:    resolvedBy,
+				}
+			}
+			idx := i
+			lastTransformIdx, lastTransform = &idx, v
+		}
+	}
+
+	// No standing deny: combined is the last transform, else allow.
+	combined, decidedBy := AllowVerdict, (*int)(nil)
+	if lastTransformIdx != nil {
+		combined, decidedBy = lastTransform, lastTransformIdx
+	}
+	f := false
+	return dispatchOutcome{
+		combined:      withUnions(combined, pool),
+		decidedBy:     decidedBy,
+		verdicts:      summaries(perInterceptor),
+		foldTruncated: &f,
+		resolvedBy:    resolvedBy,
+	}
+}
+
+// dispatchRunAll implements sequential/run_all (§7.4): everything runs,
+// transforms fold through for visibility, severity-max aggregate; the
+// seam is consulted at most once, only when the winner is liftable
+// (which, by severity, implies every deny in the emission is liftable).
+func (e *InterceptionEmitter) dispatchRunAll(ctx context.Context, actx AgentContext) dispatchOutcome {
+	var all []Verdict
+	for _, ic := range e.interceptors {
+		// §6.3 per-interceptor: a malformed verdict becomes that
+		// interceptor's synthesized deny; the rest still run.
+		v := e.invoke(ctx, ic, actx)
+		if v.Decision == Transform {
+			folded := e.foldTransform(actx, v)
+			if !folded.Decision.Permits() {
+				// §7.4: a transform that fails to apply short-circuits
+				// in both sequential profiles.
+				all = append(all, folded)
+				return dispatchOutcome{combined: folded, verdicts: summaries(all)}
+			}
+			v = folded
+		}
+		all = append(all, v)
+	}
+	return e.aggregateAndConsult(ctx, actx, all)
+}
+
+// dispatchParallel implements the parallel profiles (§7.5): isolated
+// snapshots, no fold; serial dispatch (isolation semantics, not
+// scheduling). actx is not mutated during dispatch, so each invoke deep
+// copy IS the identical untransformed snapshot.
+func (e *InterceptionEmitter) dispatchParallel(ctx context.Context, actx AgentContext) dispatchOutcome {
+	all := make([]Verdict, 0, len(e.interceptors))
+	for _, ic := range e.interceptors {
+		all = append(all, e.invoke(ctx, ic, actx))
+	}
+	return e.aggregateAndConsult(ctx, actx, all)
+}
+
+// aggregateAndConsult delegates the §7.3/§7.5 aggregation (including
+// parallel/unanimous disagreement and transform-conflict synthesis) to
+// the core, then handles the environment-dependent follow-ups natively:
+// applying a single winning parallel transform and consulting the seam.
+func (e *InterceptionEmitter) aggregateAndConsult(ctx context.Context, actx AgentContext, all []Verdict) dispatchOutcome {
+	cfgJSON, err := json.Marshal(e.composition)
+	if err != nil {
+		return dispatchOutcome{combined: HostErrorVerdict(ErrContextInvalid, err.Error()), verdicts: summaries(all)}
+	}
+	allJSON, err := json.Marshal(all)
+	if err != nil {
+		return dispatchOutcome{combined: HostErrorVerdict(ErrVerdictInvalid, err.Error()), verdicts: summaries(all)}
+	}
+	out, err := nativeComposeAggregate(string(cfgJSON), string(allJSON))
+	if err != nil {
+		return dispatchOutcome{combined: coreErrVerdict(err, ErrVerdictInvalid), verdicts: summaries(all)}
+	}
+	var agg struct {
+		Combined       Verdict          `json:"combined"`
+		DecidedBy      *int             `json:"decided_by"`
+		Consult        bool             `json:"consult"`
+		ApplyTransform bool             `json:"apply_transform"`
+		Verdicts       []VerdictSummary `json:"verdicts"`
+	}
+	if err := json.Unmarshal([]byte(out), &agg); err != nil {
+		return dispatchOutcome{combined: HostErrorVerdict(ErrVerdictInvalid, err.Error()), verdicts: summaries(all)}
+	}
+	combined, decidedBy := agg.Combined, agg.DecidedBy
+	var resolvedBy *string
+
+	if agg.ApplyTransform {
+		// §7.5 parallel: apply the single winning transform now
+		// (nothing folded during dispatch).
+		folded := e.foldTransform(actx, combined)
+		if !folded.Decision.Permits() {
+			return dispatchOutcome{combined: folded, verdicts: agg.Verdicts}
+		}
+		return dispatchOutcome{combined: folded, decidedBy: decidedBy, verdicts: agg.Verdicts}
+	}
+
+	if agg.Consult {
+		verdict, consulted, permitted := e.consult(ctx, actx, combined)
+		if consulted {
+			if permitted {
+				rb := ResolvedByApproval
+				resolvedBy = &rb
+				// §7.6: the resolution substitutes for the winner (or
+				// the synthesized deny); a transform is applied on top
+				// of the dispatched state.
+				sub := verdict
+				if sub.Decision == Transform {
+					sub = e.foldTransform(actx, sub)
+				}
+				if sub.Decision.Permits() {
+					pool := append(append([]Verdict(nil), all...), sub)
+					combined = withUnions(sub, pool)
+				} else {
+					combined = sub // fold failed closed
+				}
+			} else {
+				if isHostSynthesized(verdict) {
+					decidedBy = nil
+				}
+				combined = withUnions(verdict, all)
 			}
 		}
 	}
-	if len(labels) > 0 {
-		combined.ResultLabels = labels
-	}
-	return combined, decidedBy
+	return dispatchOutcome{combined: combined, decidedBy: decidedBy, verdicts: agg.Verdicts, resolvedBy: resolvedBy}
 }
 
 // foldTransform applies (enforce) or validates (evaluate_only) one
-// transform (§7.1, §8). On apply, actx is replaced in place with the
+// transform (§7.4, §8). On apply, actx is replaced in place with the
 // core's updated context so the next interceptor sees the effect.
 func (e *InterceptionEmitter) foldTransform(actx AgentContext, v Verdict) Verdict {
 	if v.Transform == nil {
@@ -316,51 +623,168 @@ func (e *InterceptionEmitter) foldTransform(actx AgentContext, v Verdict) Verdic
 	return v
 }
 
-func (e *InterceptionEmitter) resolveEscalate(
-	ctx context.Context,
-	ip InterceptionPoint,
-	actx AgentContext,
-	verdict Verdict,
-	identity string,
-) Verdict {
-	if e.resolver == nil {
-		return HostErrorVerdict(ErrApprovalResolverMissing, "")
+// consult consults the approval seam for a liftable deny (§9) when the
+// profile conditions allow it: enforce mode, not agent_shutdown, a
+// resolver registered, and the verdict actually liftable. Enforces the
+// echo rule and the §9 outcome/verdict consistency requirements.
+//
+// Returns (substituted verdict, consulted, permitted). consulted is
+// false when the seam was not touched — the liftable deny then stands
+// as-is; conformant, NOT an error (§9). permitted is true only for an
+// approve outcome carrying a permit verdict.
+func (e *InterceptionEmitter) consult(ctx context.Context, actx AgentContext, verdict Verdict) (Verdict, bool, bool) {
+	if !verdict.IsLiftable() || e.mode != Enforce {
+		return Verdict{}, false, false
 	}
+	// §6.1a: nothing to approve at agent_shutdown.
+	if actx.InterceptionPoint() == AgentShutdown {
+		return Verdict{}, false, false
+	}
+	// §9: no resolver → the deny stands. Conformant, not an error.
+	if e.resolver == nil {
+		return Verdict{}, false, false
+	}
+
+	// §9: identity of the context as presented to the resolver —
+	// consultation time, after any transforms that folded earlier.
+	identity, err := e.identity.compute(actx)
+	if err != nil {
+		return coreErrVerdict(err, ErrContextInvalid), true, false
+	}
+
 	res, err, timedOut := callWithTimeout(ctx, e.Timeout,
 		func(c context.Context) (ApprovalResolution, error) {
 			return e.resolver.Resolve(c, ApprovalRequest{
 				ContextIdentity:   identity,
-				InterceptionPoint: ip,
+				InterceptionPoint: actx.InterceptionPoint(),
 				Verdict:           verdict,
 				Context:           actx,
 			})
 		})
 	if timedOut {
-		return HostErrorVerdict(ErrApprovalResolverFailed, "timeout") // §7
+		return HostErrorVerdict(ErrApprovalResolverFailed, "timeout"), true, false // §7
 	}
 	if err != nil {
-		return HostErrorVerdict(ErrApprovalResolverFailed, fmt.Sprintf("%T", err))
+		return HostErrorVerdict(ErrApprovalResolverFailed, fmt.Sprintf("%T", err)), true, false
 	}
-	if res.ContextIdentity != identity {
-		return HostErrorVerdict(ErrApprovalActionMismatch, "")
+	// §9 echo rule (byte-for-byte; nil echoes as nil).
+	if !identityEqual(res.ContextIdentity, identity) {
+		return HostErrorVerdict(ErrApprovalIdentityMismatch, ""), true, false
 	}
-	if res.Outcome == Unresolved || res.Verdict == nil {
-		return HostErrorVerdict(ErrApprovalUnresolved, "")
+	if res.Verdict == nil || res.Outcome == Unresolved {
+		return HostErrorVerdict(ErrApprovalUnresolved, ""), true, false
 	}
-	// §9/N04: the resolver's verdict crosses the same §5 gate as an
-	// interceptor's.
+	// §9: the resolver's verdict crosses the same §5 gate as an
+	// interceptor's, and outcome/decision must agree (approve MUST
+	// carry a permit, reject MUST carry a deny).
 	vb, err := json.Marshal(*res.Verdict)
 	if err != nil {
-		return HostErrorVerdict(ErrVerdictInvalid, err.Error())
+		return HostErrorVerdict(ErrVerdictInvalid, err.Error()), true, false
 	}
-	if _, err := nativeValidateVerdict(string(vb)); err != nil {
-		var ce *CoreError
-		if errors.As(err, &ce) {
-			return HostErrorVerdict(ErrVerdictInvalid, ce.Detail)
+	normalized, err := nativeValidateVerdict(string(vb))
+	if err != nil {
+		return coreErrVerdict(err, ErrVerdictInvalid), true, false
+	}
+	var rv Verdict
+	if err := json.Unmarshal([]byte(normalized), &rv); err != nil {
+		return HostErrorVerdict(ErrVerdictInvalid, err.Error()), true, false
+	}
+	switch res.Outcome {
+	case Approve:
+		if !rv.Decision.Permits() {
+			return HostErrorVerdict(ErrVerdictInvalid, "approve MUST carry a permit verdict (§9)"), true, false
 		}
-		return HostErrorVerdict(ErrVerdictInvalid, err.Error())
+		return rv, true, true
+	case Reject:
+		if rv.Decision != Deny {
+			return HostErrorVerdict(ErrVerdictInvalid, "reject MUST carry a deny verdict (§9)"), true, false
+		}
+		return rv, true, false
+	default:
+		return HostErrorVerdict(ErrApprovalUnresolved, ""), true, false
 	}
-	return *res.Verdict
+}
+
+// identityEqual is the §9 echo-rule comparison: both nil, or both
+// non-nil and byte-for-byte equal.
+func identityEqual(a, b *string) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
+// ---- §7.3 metadata unions (pure mirrors of the Rust core's) -----------------
+
+// summaries builds the payload-free per-interceptor summaries for the
+// record (§10.3), index-aligned with registration order.
+func summaries(verdicts []Verdict) []VerdictSummary {
+	out := make([]VerdictSummary, len(verdicts))
+	for i, v := range verdicts {
+		out[i] = VerdictSummary{Index: i, Decision: v.Decision, Reason: v.Reason}
+	}
+	return out
+}
+
+// unionWarnings is the first-seen-ordered union of warnings from every
+// verdict (§7.3).
+func unionWarnings(verdicts []Verdict) []Warning {
+	var out []Warning
+	for _, v := range verdicts {
+		for _, w := range v.Warnings {
+			seen := false
+			for _, have := range out {
+				if have == w {
+					seen = true
+					break
+				}
+			}
+			if !seen {
+				out = append(out, w)
+			}
+		}
+	}
+	return out
+}
+
+// unionLabels is the first-seen-ordered union of result_labels from
+// every permit verdict (§7.3; §5.4 drops labels when the emission does
+// not proceed).
+func unionLabels(verdicts []Verdict) []string {
+	var out []string
+	for _, v := range verdicts {
+		if !v.Decision.Permits() {
+			continue
+		}
+		for _, l := range v.ResultLabels {
+			seen := false
+			for _, have := range out {
+				if have == l {
+					seen = true
+					break
+				}
+			}
+			if !seen {
+				out = append(out, l)
+			}
+		}
+	}
+	return out
+}
+
+// withUnions applies the §7.3 metadata unions to a combined verdict:
+// warnings from every verdict in the pool; labels only onto a permit
+// combination.
+func withUnions(combined Verdict, pool []Verdict) Verdict {
+	if warnings := unionWarnings(pool); len(warnings) > 0 {
+		combined.Warnings = warnings
+	}
+	if combined.Decision.Permits() {
+		if labels := unionLabels(pool); len(labels) > 0 {
+			combined.ResultLabels = labels
+		}
+	}
+	return combined
 }
 
 // coreErrVerdict maps a CoreError to a host_error deny verdict, falling

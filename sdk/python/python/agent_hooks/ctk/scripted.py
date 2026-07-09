@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from agent_hooks import _core
+from agent_hooks._marshal import dumps
 from agent_hooks._types import Verdict
 from agent_hooks.approval import ApprovalOutcome, ApprovalRequest, ApprovalResolution
 from agent_hooks.context import AgentContext
@@ -28,10 +29,10 @@ class ScriptedInterceptor:
     _rules_json: str = field(init=False)
 
     def __post_init__(self) -> None:
-        self._rules_json = json.dumps(self.rules)
+        self._rules_json = dumps(self.rules)
 
     def intercept(self, context: AgentContext) -> dict[str, Any]:
-        w = json.loads(_core.ctk_scripted_intercept(self._rules_json, json.dumps(context)))
+        w = json.loads(_core.ctk_scripted_intercept(self._rules_json, dumps(context)))
         if "__ctk_fault__" in w:
             # NOW-10 fault injection: exercise §6.3 interceptor_failed.
             raise RuntimeError("ctk scripted fault: raise")
@@ -62,19 +63,25 @@ class ScriptedResolver:
     _rules_json: str = field(init=False)
 
     def __post_init__(self) -> None:
-        self._rules_json = json.dumps(self.rules)
+        self._rules_json = dumps(self.rules)
 
     def resolve(self, request: ApprovalRequest) -> ApprovalResolution:
+        # §10.1: identity may be None (null provider). The scripted
+        # engine works in strings; "" round-trips to None below.
+        request_identity = request.context_identity or ""
         r = json.loads(
             _core.ctk_scripted_resolve(
-                self._rules_json, json.dumps(request.context), request.context_identity
+                self._rules_json, dumps(request.context), request_identity
             )
         )
         if "__ctk_fault__" in r:
             # NOW-10 fault injection: exercise §9 approval_resolver_failed.
             raise RuntimeError("ctk scripted fault: raise")
+        echoed = r.get("context_identity") or ""
         return ApprovalResolution(
             outcome=ApprovalOutcome(r["outcome"]),
-            context_identity=r["context_identity"],
+            context_identity=(
+                None if echoed == "" and request.context_identity is None else echoed
+            ),
             verdict=Verdict.from_wire(r["verdict"]) if "verdict" in r else None,
         )

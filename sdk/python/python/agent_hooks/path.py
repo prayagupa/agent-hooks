@@ -14,6 +14,7 @@ import re
 from typing import Any
 
 from agent_hooks import _core
+from agent_hooks._marshal import dumps
 from agent_hooks._types import HostError
 
 _ROOT_RE = re.compile(r"^\$(target|policy_target)")
@@ -83,7 +84,7 @@ def apply(target: Any, path: str, value: Any) -> Any:
     across the FFI boundary); ``target`` is not mutated.
     """
     try:
-        out = _core.apply_transform(json.dumps(target), path, json.dumps(value))
+        out = _core.apply_transform(dumps(target), path, dumps(value))
     except _core.AgentHooksCoreError as e:
         code = getattr(e, "code", HostError.TRANSFORM_INVALID.value)
         raise PathError(HostError(code), str(e)) from e

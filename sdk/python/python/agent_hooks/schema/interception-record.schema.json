@@ -1,8 +1,8 @@
 {
   "$id": "https://agent-hooks.responsibleai.dev/v0.1/interception-record.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Agent Hooks \u2014 interception record",
-  "description": "Host-side record of one interception (AGENT-HOOKS-0.1 \u00a76, \u00a710). Payload-free: identities bind the record to the exact pre/post-fold context; session_id/sequence/decided_by provide ordering and attribution without payload duplication.",
+  "title": "Agent Hooks — interception record",
+  "description": "Host-side record of one emission (AGENT-HOOKS-0.1 §10.3). Payload-free: identities (when a provider is declared) bind the record to the exact pre/post-composition context; session_id/sequence/decided_by provide ordering and attribution; composition makes the record interpretable without out-of-band host configuration.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -11,8 +11,10 @@
     "verdict",
     "input_identity",
     "enforced_identity",
+    "identity_provider",
     "session_id",
-    "sequence"
+    "sequence",
+    "composition"
   ],
   "properties": {
     "interception_point": {
@@ -26,23 +28,29 @@
       ]
     },
     "verdict": {
-      "$ref": "verdict.schema.json"
+      "description": "The combined verdict (§7.3), possibly host-synthesized or approval-substituted.",
+      "type": "object"
     },
     "input_identity": {
-      "type": "string",
-      "pattern": "^sha256:[0-9a-f]{64}$"
+      "type": ["string", "null"],
+      "description": "Identity provider output on the context before dispatch; null iff identity_provider is null."
     },
     "enforced_identity": {
-      "type": "string",
-      "pattern": "^sha256:[0-9a-f]{64}$"
+      "type": ["string", "null"],
+      "description": "Identity provider output after composition completes; null iff identity_provider is null."
+    },
+    "identity_provider": {
+      "type": ["string", "null"],
+      "pattern": "^[a-z][a-z0-9_-]*$",
+      "description": "The declared identity provider (§10.1): \"jcs-sha256\", a host-defined id, or null (identity-unbound)."
     },
     "session_id": {
       "type": "string",
-      "description": "ctx.session.id \u2014 correlates records across a session."
+      "description": "ctx.session.id — correlates records across a session."
     },
     "sequence": {
       "type": "integer",
-      "description": "ctx.sequence \u2014 total order of records within the session (\u00a712.2.3)."
+      "description": "ctx.sequence — total order of records within the session (§12.2.3)."
     },
     "decided_by": {
       "type": [
@@ -50,7 +58,58 @@
         "null"
       ],
       "minimum": 0,
-      "description": "Registration index of the interceptor whose verdict became this record's verdict; null for a pure allow or a host-synthesized host_error:* verdict. A resolver-substituted verdict keeps the escalating interceptor's index."
+      "description": "Registration index of the interceptor whose verdict won aggregation or whose liftable deny was consulted (§7.6); null for a pure-allow combination or a host-synthesized verdict."
+    },
+    "composition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profile"],
+      "properties": {
+        "profile": {
+          "type": "string",
+          "enum": [
+            "sequential/first_deny",
+            "sequential/run_all",
+            "parallel/strictest",
+            "parallel/unanimous"
+          ]
+        },
+        "on_approval": { "type": "string", "enum": ["stop", "resume"] },
+        "on_disagreement": { "type": "string", "enum": ["deny", "approval"] },
+        "on_transform_conflict": { "type": "string", "enum": ["deny", "approval"] }
+      },
+      "description": "The composition profile and knobs in effect for this emission (§7.1)."
+    },
+    "verdicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["index", "decision"],
+        "properties": {
+          "index": { "type": "integer", "minimum": 0 },
+          "decision": { "type": "string", "enum": ["allow", "deny", "transform"] },
+          "reason": { "type": ["string", "null"] }
+        }
+      },
+      "description": "Payload-free per-interceptor summary. REQUIRED in multi-verdict profiles (sequential/run_all, parallel/*); OPTIONAL in sequential/first_deny."
+    },
+    "fold_truncated": {
+      "type": "boolean",
+      "description": "true iff one or more registered interceptors were never invoked in this emission (short-circuit or approval-stop). Defined only for sequential/first_deny."
+    },
+    "resolved_by": {
+      "type": ["string", "null"],
+      "enum": ["approval", null],
+      "description": "\"approval\" iff an approval resolution substituted for a verdict in this emission (§7.6)."
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "composition": { "properties": { "profile": { "enum": ["sequential/run_all", "parallel/strictest", "parallel/unanimous"] } } } }
+      },
+      "then": { "required": ["verdicts"] }
+    }
+  ]
 }
