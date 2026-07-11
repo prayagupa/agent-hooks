@@ -1,0 +1,45 @@
+# agent-hooks (Go SDK)
+
+Go implementation of
+[AGENT-HOOKS-0.1](https://github.com/responsibleai/agent-hooks/blob/main/spec/AGENT-HOOKS-0.1.md)
+over the canonical Rust core (`libagent_hooks_ffi` via cgo):
+interception points, `AgentContextBuilder`, `Verdict` types,
+host-side `InterceptionEmitter` with the four composition profiles,
+the identity-provider seam, and the CTK runner.
+
+> **Trust model.** agent-hooks is a *cooperative contract*, not a security
+> boundary: the host framework is fully trusted, interceptors run in-process
+> with full data access, and no complete-mediation claim is made. Read
+> [SECURITY.md](https://github.com/responsibleai/agent-hooks/blob/main/SECURITY.md)
+> and [spec §1.4](https://github.com/responsibleai/agent-hooks/blob/main/spec/AGENT-HOOKS-0.1.md#14-trust-model-and-non-goals)
+> before relying on it.
+
+```bash
+# Module path: github.com/responsibleai/agent-hooks/sdk/go
+# (private repo — requires a Rust toolchain to build the native lib)
+git clone https://github.com/responsibleai/agent-hooks && cd agent-hooks
+cargo build --release --manifest-path sdk/rust/Cargo.toml -p agent-hooks-ffi
+cd sdk/go && CGO_ENABLED=1 go build ./...
+```
+
+## Usage
+
+```go
+import "github.com/responsibleai/agent-hooks/sdk/go/agenthooks"
+
+e := agenthooks.NewInterceptionEmitter(agenthooks.Enforce, nil)
+e.Register(myPolicy{}) // implements OnHook(ctx, AgentContext) (Verdict, error)
+b := agenthooks.NewAgentContextBuilder("my-agent", "my-fw", "s-1")
+
+ctx := b.PreToolCall("tc-1", "http_get", map[string]any{"url": url})
+rec, err := e.EmitUnchecked(context.Background(), ctx)
+if err != nil { /* infrastructure error */ }
+if !rec.Proceeds() { /* surface rec.Verdict.Reason as a tool error */ }
+// proceed with ctx["tool_call"].(map[string]any)["args"] (post-transform)
+```
+
+`agenthooks.Warn(..)` / `agenthooks.Escalate(..)` are the §5
+constructor shortcuts. Interceptor/resolver panics are recovered and
+fail closed (§6.3). **Value-domain note (spec §4.4):** decode JSON
+carrying 64-bit integers with `json.Number` — default `any`
+decoding rounds beyond 2^53 exactly like JavaScript.

@@ -36,6 +36,14 @@ pub fn load_vectors(dir: impl AsRef<Path>) -> std::io::Result<Vec<Value>> {
         })
         .collect();
     names.sort();
+    if names.is_empty() {
+        // A runner fed zero vectors reports 100% pass — a false
+        // conformance signal (§13.2). Fail loudly instead.
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "no AH-CTK-*.json vectors found",
+        ));
+    }
     names
         .into_iter()
         .map(|p| {

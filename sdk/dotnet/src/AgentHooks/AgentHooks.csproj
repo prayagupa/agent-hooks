@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <PackageId>ResponsibleAI.AgentHooks</PackageId>
-    <Description>Framework-neutral agent control contract (AGENT-HOOKS-0.1). .NET wrapper over the canonical Rust core via libagent_hooks_ffi.</Description>
+    <Description>Framework-neutral agent control contract (AGENT-HOOKS-0.1). .NET wrapper over the canonical Rust core via libagent_hooks_ffi. Cooperative contract, not a security boundary: the host is fully trusted (see SECURITY.md).</Description>
     <RootNamespace>AgentHooks</RootNamespace>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>

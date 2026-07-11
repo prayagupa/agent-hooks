@@ -2,18 +2,18 @@
 
 ## Rust core, per-language wrappers
 
-`sdk/rust/core` (`agent-hooks` crate) is the single canonical
+`sdk/rust/core` (`agent-hooks-sdk` crate, lib name `agent_hooks`) is the single canonical
 implementation of AGENT-HOOKS-0.1. Every other SDK binds to it so that
 the security-relevant primitives have exactly one implementation:
 
 | §    | Primitive | Core symbol |
 | ---- | --------- | ----------- |
-| 10.1 | Canonical JSON | `canonical_json` |
-| 10.2 | Context identity | `context_identity` |
-| 5    | Verdict wire validation | `verdict_from_wire` |
-| 5.2  | Transform path parse/apply | `parse_transform_path`, `apply_transform_path` |
-| 7.1  | Multi-interceptor combination | `combine_verdicts` |
-| 6/8  | Enforcement step (identities, transform, write-back) | `enforce` |
+| 10.2 | Canonical JSON (RFC 8785) | `canonical::canonical_json` |
+| 10.2 | Context identity (jcs-sha256 provider, fail-closed I-JSON domain) | `canonical::context_identity`, `canonical::scan_projection_raw` |
+| 5    | Verdict wire validation | `verdict::from_wire` |
+| 5.2  | Transform path parse/apply | `path::apply`, `enforce::apply_transform_to_ctx` |
+| 7.3/7.5 | Multi-verdict aggregation (severity, unions, conflicts) | `composition::aggregate_strictest`, `ffi_surface::compose_aggregate` |
+| 10.3 | Record assembly | `enforce::finalize` |
 
 What stays per-language: the `Interceptor` callback protocol, the
 `AgentContextBuilder` convenience helper, exception/error types, and the

@@ -41,10 +41,16 @@ export interface VectorResult {
 }
 
 export function loadVectors(dir: string): JsonValue[] {
-  return readdirSync(dir)
+  const vectors = readdirSync(dir)
     .filter((f) => /^AH-CTK-.*\.json$/.test(f))
     .sort()
     .map((f) => JSON.parse(readFileSync(join(dir, f), "utf8")) as JsonValue);
+  if (vectors.length === 0) {
+    // A runner fed zero vectors reports 100% pass — a false
+    // conformance signal (§13.2). Fail loudly instead.
+    throw new Error(`no AH-CTK-*.json vectors found in ${dir}`);
+  }
+  return vectors;
 }
 
 /** Replays one `interceptor_script` rule list via the Rust core. */

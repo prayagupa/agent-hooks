@@ -81,8 +81,10 @@ in any SDK; register with the host.
 **Prove conformance:**
 
 ```bash
-pip install --pre "agent-hooks-sdk[ctk]"   # import name: agent_hooks
-pytest --agent-hooks-harness=your_pkg:YourHarness
+# The 0.1.0a1 artifact on PyPI implements a superseded draft — until
+# 0.1.0a2 is published, install from source:
+pip install "agent-hooks-sdk[ctk] @ git+https://github.com/responsibleai/agent-hooks.git#subdirectory=sdk/python"
+pytest --agent-hooks-harness=your_pkg:YourHarness   # vectors ship in the wheel
 ```
 
 ## Conformance

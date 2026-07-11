@@ -26,4 +26,13 @@ Report privately via [GitHub Security Advisories](https://github.com/responsible
 
 ## Supported versions
 
-Pre-1.0: only the latest tagged spec version and the latest SDK release per language receive security fixes.
+Pre-1.0: only the latest tagged release (spec + SDKs together) receives security fixes.
+
+> **No release is currently supported.** The repo has no tags yet, and the
+> artifacts published to registries as `0.1.0a1` / `0.1.0-alpha.1`
+> (PyPI `agent-hooks-sdk`, crates.io `agent-hooks-sdk`) implement a
+> **superseded draft** of the spec that predates the three-verdict model,
+> composition profiles, and the identity-provider seam. Do not build on
+> them; install from source (`main`) until `0.1.0a2` is published. Each
+> SDK reports the spec revision it implements via its `SPEC_VERSION`
+> constant / `ah_spec_version()`.

@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import importlib
-import pathlib
 
 import pytest
 
@@ -30,9 +29,7 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
     if "agent_hooks_vector" not in metafunc.fixturenames:
         return
     vdir = metafunc.config.getoption("--agent-hooks-vectors")
-    if vdir is None:
-        vdir = pathlib.Path(__file__).resolve().parents[5] / "conformance" / "vectors"
-    vectors = load_vectors(vdir)
+    vectors = load_vectors(vdir)  # None -> the set vendored in the wheel
     metafunc.parametrize("agent_hooks_vector", vectors, ids=[v["id"] for v in vectors])
 
 

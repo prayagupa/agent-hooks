@@ -42,9 +42,30 @@ class VectorResult:
     failures: list[str] = field(default_factory=list)
 
 
-def load_vectors(directory: str | pathlib.Path) -> list[dict[str, Any]]:
-    d = pathlib.Path(directory)
-    return [json.loads(f.read_text()) for f in sorted(d.glob("AH-CTK-*.json"))]
+def load_vectors(directory: str | pathlib.Path | None = None) -> list[dict[str, Any]]:
+    """Load CTK vectors; default = the set vendored inside the wheel.
+
+    Raises rather than returning an empty list: a runner fed zero
+    vectors reports 100% pass — a false conformance signal (§13.2).
+    """
+    if directory is None:
+        from importlib.resources import files
+
+        root = files("agent_hooks.ctk") / "vectors"
+        vectors = [
+            json.loads(f.read_text())
+            for f in sorted(root.iterdir(), key=lambda f: f.name)
+            if f.name.startswith("AH-CTK-") and f.name.endswith(".json")
+        ]
+    else:
+        d = pathlib.Path(directory)
+        vectors = [json.loads(f.read_text()) for f in sorted(d.glob("AH-CTK-*.json"))]
+    if not vectors:
+        raise FileNotFoundError(
+            f"no AH-CTK-*.json vectors found in {directory or 'the packaged set'} — "
+            "an empty vector set would report vacuous conformance"
+        )
+    return vectors
 
 
 def _run_record_to_wire(rr: RunRecord) -> str:

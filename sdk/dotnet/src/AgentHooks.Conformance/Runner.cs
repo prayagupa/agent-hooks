@@ -23,7 +23,12 @@ public static class Runner
 
     public static IEnumerable<JsonObject> LoadVectors(string directory)
     {
-        foreach (var f in Directory.EnumerateFiles(directory, "AH-CTK-*.json").OrderBy(p => p))
+        var files = Directory.EnumerateFiles(directory, "AH-CTK-*.json").OrderBy(p => p).ToList();
+        if (files.Count == 0)
+            // A runner fed zero vectors reports 100% pass — a false
+            // conformance signal (§13.2). Fail loudly instead.
+            throw new FileNotFoundException($"no AH-CTK-*.json vectors found in {directory}");
+        foreach (var f in files)
             yield return (JsonObject)JsonNode.Parse(File.ReadAllText(f))!;
     }
 

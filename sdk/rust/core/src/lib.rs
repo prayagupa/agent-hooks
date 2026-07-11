@@ -17,6 +17,17 @@
 //! [`InterceptionEmitter`], [`AgentContextBuilder`], and (behind the
 //! `ctk` feature) the CTK runner and [`ctk::ReferenceHarness`]. The
 //! other languages implement the same per-language pieces over the FFI.
+//!
+//! # Trust model
+//!
+//! agent-hooks is a **cooperative contract, not a security boundary**:
+//! the host framework is fully trusted (every §6 obligation is a MUST
+//! on the host, and nothing detects a host that ignores it),
+//! interceptors run in-process with full data access, and no
+//! complete-mediation claim is made. Conformance is not a security
+//! certification. See
+//! [SECURITY.md](https://github.com/responsibleai/agent-hooks/blob/main/SECURITY.md)
+//! and [spec §1.4](https://github.com/responsibleai/agent-hooks/blob/main/spec/AGENT-HOOKS-0.1.md#14-trust-model-and-non-goals).
 
 #![warn(clippy::all)]
 

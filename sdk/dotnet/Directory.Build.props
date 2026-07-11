@@ -8,6 +8,6 @@
     <Authors>Responsible AI</Authors>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <RepositoryUrl>https://github.com/responsibleai/agent-hooks</RepositoryUrl>
-    <Version>0.1.0-alpha.1</Version>
+    <Version>0.1.0-alpha.2</Version>
   </PropertyGroup>
 </Project>

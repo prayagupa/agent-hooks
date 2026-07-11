@@ -33,6 +33,11 @@ func LoadVectors(dir string) ([]map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	if len(paths) == 0 {
+		// A runner fed zero vectors reports 100% pass — a false
+		// conformance signal (§13.2). Fail loudly instead.
+		return nil, fmt.Errorf("no AH-CTK-*.json vectors found in %s", dir)
+	}
 	sort.Strings(paths)
 	var out []map[string]any
 	for _, p := range paths {
