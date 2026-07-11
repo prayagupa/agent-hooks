@@ -15,7 +15,10 @@ typedef struct {
     uint8_t ok;
     /* On success: JSON result. On error: detail message. UTF-8, NUL-terminated. */
     char *value;
-    /* On error: host_error:* code. NULL on success. UTF-8, NUL-terminated. */
+    /* On error: a host_error:* code, or "marshal_error" (invalid UTF-8
+     * argument / unmarshalable result) or "panic" (core defect caught at
+     * the boundary; the process is not aborted). NULL on success.
+     * UTF-8, NUL-terminated. */
     char *error_code;
 } AhResult;
 

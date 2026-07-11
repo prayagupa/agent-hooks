@@ -14,6 +14,9 @@ public sealed class ReferenceHarness : IHarness
         new HashSet<Capability>
         {
             Capability.ModelCalls, Capability.ToolCalls, Capability.Int64Json,
+            // JsonNode preserves raw numeric tokens: beyond-u64 literals
+            // survive vector loading and emission byte-faithfully.
+            Capability.BigintJson,
         };
 
     private Scenario? _scenario;

@@ -34,18 +34,26 @@ fn parse_json(s: &str, what: &str) -> Result<Value, FfiError> {
     serde_json::from_str(s).map_err(|e| err(HostError::ContextInvalid, format!("{what}: {e}")))
 }
 
-/// §10.2: canonical JSON of an arbitrary value (RFC 8785).
+/// §10.2: canonical JSON of an arbitrary value (RFC 8785). Rejects
+/// integer literals beyond ±(2⁵³−1): serde would coerce them to f64
+/// before serialization, silently rewriting the bytes (§4.4 "never
+/// normalize").
 pub fn canonical_json(value_json: &str) -> Result<String, FfiError> {
     let v = parse_json(value_json, "value")?;
+    canonical::scan_raw_integer_domain(value_json).map_err(|(e, d)| err(e, d))?;
     Ok(canonical::canonical_json(&v))
 }
 
 /// §10.2: the `jcs-sha256` identity provider. Fails closed
 /// (`host_error:context_invalid` with remediation detail) on a
-/// non-I-JSON projection.
+/// non-I-JSON projection. The raw-text scan runs here (not only in
+/// `canonical::context_identity`) because integer literals beyond the
+/// u64/i64 range are already lossy after `serde_json::from_str` — the
+/// in-memory check alone cannot see them.
 pub fn context_identity(ctx_json: &str) -> Result<String, FfiError> {
     let ctx: AgentContext = serde_json::from_str(ctx_json)
         .map_err(|e| err(HostError::ContextInvalid, format!("ctx: {e}")))?;
+    canonical::scan_projection_raw(ctx_json).map_err(|(e, d)| err(e, d))?;
     canonical::context_identity(&ctx).map_err(|(e, d)| err(e, d))
 }
 
@@ -238,10 +246,19 @@ pub fn finalize(
             .and_then(Value::as_str)
             .map(str::to_owned)
     };
+    // jcs-sha256 computes enforced_identity core-side from this ctx,
+    // but the parse above already coerced any beyond-u64 literal — so
+    // when the raw-text scan rejects, identity computation is
+    // suppressed (null identities, §10.3 rejection shape) rather than
+    // hashing the rounded bytes. Never an error here: finalize builds
+    // the fail-closed record for exactly these contexts.
+    let jcs_input_rejected = opt_str("identity_provider").as_deref() == Some("jcs-sha256")
+        && canonical::scan_projection_raw(ctx_json).is_err();
     let meta = FinalizeMeta {
         input_identity: opt_str("input_identity"),
         identity_provider: opt_str("identity_provider"),
         enforced_identity: opt_str("enforced_identity"),
+        jcs_input_rejected,
         decided_by: opts
             .get("decided_by")
             .and_then(Value::as_u64)

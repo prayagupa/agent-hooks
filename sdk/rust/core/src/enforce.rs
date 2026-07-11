@@ -90,6 +90,13 @@ pub struct FinalizeMeta {
     /// Pre-computed post-composition identity for custom providers.
     /// Ignored when `identity_provider == Some(JCS_SHA256)`.
     pub enforced_identity: Option<String>,
+    /// True when the raw-text scan (§10.2) rejected the context at a
+    /// JSON funnel: the parsed `ctx` then holds already-coerced
+    /// numbers, so the JCS arm MUST NOT compute an identity from it
+    /// (it would hash the rounded bytes). The record keeps the
+    /// declared provider name with `null` identities — the §10.3
+    /// rejection shape.
+    pub jcs_input_rejected: bool,
     pub decided_by: Option<u32>,
     pub composition: CompositionConfig,
     /// Per-interceptor summaries (multi-verdict profiles, §10.3).
@@ -115,6 +122,7 @@ pub fn finalize(ctx: &AgentContext, verdict: Verdict, mode: EnforcementMode, met
         .to_owned();
     let sequence = ctx.get("sequence").and_then(Value::as_i64).unwrap_or(-1);
     let enforced_identity = match meta.identity_provider.as_deref() {
+        Some(JCS_SHA256) if meta.jcs_input_rejected => None,
         Some(JCS_SHA256) => context_identity(ctx).ok(),
         Some(_) => meta.enforced_identity,
         None => None,

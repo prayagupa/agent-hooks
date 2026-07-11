@@ -247,6 +247,10 @@ impl InterceptionEmitter {
                 IdentityProvider::Custom { f, .. } => Some(f(ctx)),
                 _ => None, // finalize computes (default) or leaves null
             },
+            // Native hosts build in-memory Values, which cannot carry
+            // the raw-text coercion class (Number has no beyond-u64
+            // form); the in-memory check inside finalize is complete.
+            jcs_input_rejected: false,
             decided_by: outcome.decided_by,
             composition: self.composition,
             verdicts: outcome.verdicts,

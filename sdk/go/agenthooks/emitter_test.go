@@ -428,3 +428,53 @@ func TestEvaluateOnlyNeverConsults(t *testing.T) {
 		t.Error("evaluate_only emission must proceed")
 	}
 }
+
+// panicker panics inside OnHook — §6.3: this must become a fail-closed
+// host_error:interceptor_failed deny, never kill the host process.
+type panicker struct{}
+
+func (panicker) OnHook(context.Context, AgentContext) (Verdict, error) {
+	panic("interceptor bug: " + strings.Repeat("x", 8))
+}
+
+// panickyResolver panics inside Resolve — §9: approval_resolver_failed.
+type panickyResolver struct{}
+
+func (panickyResolver) Resolve(context.Context, ApprovalRequest) (ApprovalResolution, error) {
+	panic(errors.New("resolver bug"))
+}
+
+func TestPanickingInterceptorFailsClosed(t *testing.T) {
+	for _, timeout := range []int64{0, 5000} { // inline and goroutine paths
+		e := NewInterceptionEmitter(Enforce, nil)
+		if timeout > 0 {
+			e.Timeout = 5000 * 1e6 // 5000 ms in time.Duration units
+		}
+		e.Register(panicker{})
+		c := testCtx()
+		rec := emit(t, e, c)
+		if rec.Verdict.Decision != Deny {
+			t.Errorf("timeout=%d: decision = %s, want deny", timeout, rec.Verdict.Decision)
+		}
+		if rec.Verdict.Reason != string(ErrInterceptorFailed) {
+			t.Errorf("timeout=%d: reason = %q, want %s", timeout, rec.Verdict.Reason, ErrInterceptorFailed)
+		}
+		// Type-name-only rule: the panic payload text must not leak.
+		if strings.Contains(rec.Verdict.Message, "interceptor bug") {
+			t.Errorf("timeout=%d: panic payload leaked into message: %q", timeout, rec.Verdict.Message)
+		}
+	}
+}
+
+func TestPanickingResolverFailsClosed(t *testing.T) {
+	e := NewInterceptionEmitter(Enforce, panickyResolver{})
+	e.Register(scripted{Escalate("check", "")})
+	c := testCtx()
+	rec := emit(t, e, c)
+	if rec.Verdict.Decision != Deny {
+		t.Errorf("decision = %s, want deny", rec.Verdict.Decision)
+	}
+	if rec.Verdict.Reason != string(ErrApprovalResolverFailed) {
+		t.Errorf("reason = %q, want %s", rec.Verdict.Reason, ErrApprovalResolverFailed)
+	}
+}

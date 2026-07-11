@@ -482,6 +482,22 @@ def test_default_provider_rejects_big_int_before_dispatch() -> None:
     assert not r.proceeds
 
 
+def test_default_provider_rejects_beyond_u64_literal() -> None:
+    # AR-09-001 regression: serde-class parsers coerce integer literals
+    # beyond u64 to a double, so byte-distinct contexts would silently
+    # share an identity without the core's raw-text scan. Python ints
+    # are arbitrary precision, so the literal reaches the core intact.
+    scripted = Scripted(Verdict(decision=Decision.ALLOW))
+    em = InterceptionEmitter().register(scripted)
+    ctx = _ctx()
+    ctx["target"]["id"] = 2**64  # beyond u64: the coerced class
+    r = _emit(em, ctx)
+    assert r.verdict.reason == "host_error:context_invalid"
+    assert "string-encode" in (r.verdict.message or "")
+    assert scripted.calls == 0, "no interceptor ran"
+    assert not r.proceeds
+
+
 def test_nan_in_context_fails_closed_before_dispatch() -> None:
     # P-004 survivor: allow_nan=False at every marshalling site.
     scripted = Scripted(Verdict(decision=Decision.ALLOW))

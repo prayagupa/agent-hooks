@@ -39,7 +39,7 @@ func (h *ReferenceHarness) Name() string { return "reference-agent" }
 func (h *ReferenceHarness) Capabilities() map[Capability]struct{} {
 	// Int64JSON: Go holds int64, so vectors carrying >2^53 integers
 	// load losslessly (§4.4).
-	return map[Capability]struct{}{ModelCalls: {}, ToolCalls: {}, Int64JSON: {}}
+	return map[Capability]struct{}{ModelCalls: {}, ToolCalls: {}, Int64JSON: {}, BigintJSON: {}}
 }
 
 // Setup implements Harness.

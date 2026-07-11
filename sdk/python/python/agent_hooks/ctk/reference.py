@@ -25,7 +25,14 @@ class ReferenceHarness:
 
     name = "reference-agent"
     capabilities: ClassVar[frozenset[Capability]] = frozenset(
-        {Capability.MODEL_CALLS, Capability.TOOL_CALLS, Capability.INT64_JSON}
+        {
+            Capability.MODEL_CALLS,
+            Capability.TOOL_CALLS,
+            Capability.INT64_JSON,
+            # Python ints are arbitrary precision: beyond-u64 literals
+            # survive vector loading and emission byte-faithfully.
+            Capability.BIGINT_JSON,
+        }
     )
 
     def __init__(self) -> None:

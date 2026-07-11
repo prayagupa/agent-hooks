@@ -1011,6 +1011,27 @@ tools concurrently. The contract is per tool call, not per batch:
    counter) owns its own synchronization; the host does not serialize
    emissions on its behalf.
 
+### 12.3 Resource bounds
+
+[Default Implementation]
+
+`target`, `messages`, and tool results carry untrusted model/tool
+output, and each emission canonicalizes, hashes, and deep-copies them
+per interceptor. Hosts SHOULD bound both dimensions before emission and
+fail closed (`host_error:context_invalid`) on breach:
+
+- **Serialized context size** — RECOMMENDED default: 5 MiB.
+- **Nesting depth** — RECOMMENDED default: 128 levels. The shipped
+  SDKs enforce this default on the `jcs-sha256` identity path (a
+  deeper in-memory context is denied rather than overflowing the
+  canonicalizer's stack; JSON-text funnels inherit the same bound from
+  the parser's recursion limit).
+
+These are operational defaults, not conformance-gated limits; a host
+that declares different bounds remains conformant. Normative fixed
+limits are an open design question (the CTK cannot pin host-tunable
+values).
+
 ---
 
 ## 13. Conformance

@@ -95,6 +95,13 @@ beyond 2^53 from vector JSON losslessly (§4.4). JavaScript harnesses
 omit it (`JSON.parse` rounds before any guard can run); Go harnesses
 need `json.Number` decoding to claim it (see `conformance/runner.go`).
 
+`bigint_json` is the stronger form: integer tokens beyond u64/i64
+survive your JSON layer byte-faithfully (Python `int`, Go
+`json.Number`, .NET `JsonNode`). Rust harnesses omit it — `serde_json`
+coerces such literals to a double at load — which is exactly the
+coercion class the core's raw-text scan (§10.2) exists to reject; see
+`AH-CTK-091`.
+
 Non-finite floats (NaN/Infinity) and lone surrogates cannot be
 expressed in a JSON vector at all — those §4.4 marshalling guards are
 pinned by per-SDK unit tests, not vectors.

@@ -29,6 +29,9 @@ const (
 	// Int64JSON marks a harness language that can hold >2^53 integers
 	// from vector JSON losslessly (§4.4). JavaScript harnesses omit it.
 	Int64JSON Capability = "int64_json"
+	// BigintJSON: the harness JSON layer preserves integer tokens
+	// beyond u64/i64 (Go: json.Number vector decoding).
+	BigintJSON Capability = "bigint_json"
 )
 
 // RunOutcome describes how a harness run ended.

@@ -24,6 +24,8 @@ async fn ctk_reference_all_vectors() {
         }
     }
     assert!(unexpected.is_empty(), "{unexpected:#?}");
-    // Rust holds i64: no capability-skips are expected here.
-    assert_eq!(skipped, 0, "unexpected skips in the Rust self-test");
+    // Rust holds i64 (int64_json) but serde_json coerces beyond-u64
+    // vector literals at load (no bigint_json): exactly AH-CTK-091
+    // skips; its class is pinned by core unit tests instead.
+    assert_eq!(skipped, 1, "expected exactly the bigint_json skip");
 }

@@ -43,9 +43,10 @@
           "parallel_tool_calls",
           "streaming",
           "multi_turn",
-          "int64_json"
+          "int64_json",
+          "bigint_json"
         ],
-        "description": "int64_json marks vectors whose JSON carries integers beyond 2^53: a JavaScript harness cannot even load such a file without silent rounding (JSON.parse), so it omits the capability and skips."
+        "description": "int64_json marks vectors whose JSON carries integers beyond 2^53 (within i64/u64): a JavaScript harness cannot even load such a file without silent rounding (JSON.parse), so it omits the capability and skips. bigint_json marks vectors carrying integers beyond u64/i64, which additionally exceed serde_json's integer range — only harness languages whose JSON layer preserves raw numeric tokens (Python int, Go json.Number, .NET JsonNode) can claim it."
       },
       "default": []
     },

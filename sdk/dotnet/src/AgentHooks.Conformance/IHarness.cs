@@ -13,7 +13,7 @@ using System.Text.Json.Nodes;
 namespace AgentHooks.Conformance;
 
 /// <summary>Host-declared capability subset (§3.2).</summary>
-public enum Capability { ModelCalls, ToolCalls, ParallelToolCalls, Streaming, MultiTurn, Int64Json }
+public enum Capability { ModelCalls, ToolCalls, ParallelToolCalls, Streaming, MultiTurn, Int64Json, BigintJson }
 
 public static class CapabilityExtensions
 {
@@ -27,6 +27,7 @@ public static class CapabilityExtensions
         // The harness language can hold >2^53 integers from vector JSON
         // losslessly (§4.4). JavaScript harnesses omit this.
         Capability.Int64Json => "int64_json",
+        Capability.BigintJson => "bigint_json",
         _ => throw new ArgumentOutOfRangeException(nameof(c)),
     };
 }

@@ -24,6 +24,7 @@ class Capability(str, Enum):
     #: The harness language can hold >2^53 integers from vector JSON
     #: losslessly (§4.4). JavaScript harnesses omit this.
     INT64_JSON = "int64_json"
+    BIGINT_JSON = "bigint_json"
 
 
 class RunOutcome(str, Enum):

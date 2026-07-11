@@ -407,6 +407,10 @@ impl Harness for ReferenceHarness {
     }
 
     fn capabilities(&self) -> Vec<String> {
+        // bigint_json is NOT claimed: serde_json coerces beyond-u64
+        // vector literals to f64 at load, so this harness cannot even
+        // present such a context faithfully (the core's raw-text scan
+        // is exercised by unit tests instead).
         // int64_json: Rust holds i64, so vectors carrying >2^53
         // integers load losslessly (§4.4; JS harnesses omit this).
         vec!["model_calls".into(), "tool_calls".into(), "int64_json".into()]

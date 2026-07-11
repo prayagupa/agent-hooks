@@ -135,13 +135,31 @@ type InterceptionEmitter struct {
 	records []InterceptionRecord
 }
 
+// callRecovered runs fn, converting a panic into an error (§6.3: a
+// raising interceptor/resolver fails closed as a host_error deny, it
+// does not kill the host — and a panic in the emitter-spawned goroutine
+// below would otherwise crash the entire process). Only the panic
+// value's type is reported, never its message: panic payloads routinely
+// embed the content under evaluation (NOW-05 data-minimization rule).
+func callRecovered[T any](
+	ctx context.Context, fn func(context.Context) (T, error),
+) (out T, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("callee panicked: %T", r)
+		}
+	}()
+	return fn(ctx)
+}
+
 // callWithTimeout runs fn under the §7 timeout d (d <= 0 disables). On
-// breach the eventual result is discarded and timedOut is true.
+// breach the eventual result is discarded and timedOut is true. A
+// panicking fn is recovered on both paths and surfaces as an error.
 func callWithTimeout[T any](
 	ctx context.Context, d time.Duration, fn func(context.Context) (T, error),
 ) (out T, err error, timedOut bool) {
 	if d <= 0 {
-		out, err = fn(ctx)
+		out, err = callRecovered(ctx, fn)
 		return out, err, false
 	}
 	tctx, cancel := context.WithTimeout(ctx, d)
@@ -152,7 +170,7 @@ func callWithTimeout[T any](
 	}
 	ch := make(chan result, 1)
 	go func() {
-		v, e := fn(tctx)
+		v, e := callRecovered(tctx, fn)
 		ch <- result{v, e}
 	}()
 	select {
