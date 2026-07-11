@@ -8,21 +8,18 @@ updates:
     schedule: { interval: weekly }
     groups:
       actions: { patterns: ["*"] }
+  # The three cargo roots path-depend on the same core crate, so their
+  # lockfiles must move together: a per-directory bump leaves the
+  # sibling Cargo.locks stale and CI's --locked rejects the PR. One
+  # multi-directory entry produces a single PR updating all three.
   - package-ecosystem: cargo
-    directory: /sdk/rust
+    directories:
+      - /sdk/rust
+      - /sdk/python
+      - /sdk/typescript
     schedule: { interval: weekly }
     groups:
       rust: { patterns: ["*"] }
-  - package-ecosystem: cargo
-    directory: /sdk/python
-    schedule: { interval: weekly }
-    groups:
-      pyo3: { patterns: ["*"] }
-  - package-ecosystem: cargo
-    directory: /sdk/typescript
-    schedule: { interval: weekly }
-    groups:
-      napi: { patterns: ["*"] }
   - package-ecosystem: pip
     directory: /sdk/python
     schedule: { interval: weekly }
