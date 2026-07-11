@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+# Supply chain: least privilege — jobs only read the repo.
+permissions:
+  contents: read
+
 jobs:
   schema-lint:
     runs-on: ubuntu-latest
@@ -12,7 +16,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with: { node-version: "22" }
-      - run: npm install -g ajv-cli@5 ajv-formats@3
+      - run: npm install -g ajv-cli@5.0.0 ajv-formats@3.0.1
       - name: Validate schemas are well-formed
         run: |
           set -e
@@ -38,11 +42,15 @@ jobs:
         with: { python-version: "3.12" }
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
       - uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3
-      - name: Build native module and install
-        # maturin is the PEP 517 build backend; `pip install -e` invokes
-        # it automatically. `maturin develop` needs a venv, which the
-        # --system install does not have.
-        run: uv pip install --system -e ./sdk/python[ctk,dev]
+      - name: Install locked dependencies, then the package itself
+        # requirements-dev.lock pins every transitive dep including the
+        # maturin build backend (uv pip compile); --no-build-isolation
+        # makes the editable install use that pinned maturin instead of
+        # fetching a floating one, and [tool.maturin] locked=true pins
+        # the Rust side via Cargo.lock.
+        run: |
+          uv pip install --system -r sdk/python/requirements-dev.lock
+          uv pip install --system --no-deps --no-build-isolation -e ./sdk/python
       - run: ruff check sdk/python
       - run: pytest sdk/python/tests -p no:agent_hooks_ctk -v
 
@@ -54,6 +62,10 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with: { node-version: "22" }
       - run: npm ci
+        working-directory: sdk/typescript
+      - run: cargo fetch --locked
+        # napi-cli does not forward --locked; fetching first pins the
+        # graph, and the build below resolves offline-consistent.
         working-directory: sdk/typescript
       - run: npm run build:native:debug
         working-directory: sdk/typescript
@@ -68,9 +80,9 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with: { components: clippy }
-      - run: cargo clippy --workspace --all-features -- -D warnings
+      - run: cargo clippy --locked --workspace --all-features -- -D warnings
         working-directory: sdk/rust
-      - run: cargo test --workspace --all-features
+      - run: cargo test --locked --workspace --all-features
         working-directory: sdk/rust
 
   dotnet:
@@ -79,11 +91,13 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
       - name: Build ffi cdylib
-        run: cargo build -p agent-hooks-ffi --release
+        run: cargo build --locked -p agent-hooks-ffi --release
         working-directory: sdk/rust
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with: { dotnet-version: "8.0.x" }
-      - run: dotnet build -warnaserror
+      - run: dotnet restore --locked-mode
+        working-directory: sdk/dotnet
+      - run: dotnet build --no-restore -warnaserror
         working-directory: sdk/dotnet
       - name: Test (golden identity)
         run: dotnet test test/AgentHooks.Tests/ --nologo
@@ -97,7 +111,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
       - name: Build ffi cdylib
-        run: cargo build -p agent-hooks-ffi --release
+        run: cargo build --locked -p agent-hooks-ffi --release
         working-directory: sdk/rust
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with: { go-version: "1.22" }

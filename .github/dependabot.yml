@@ -1,0 +1,45 @@
+# Supply chain: automated dependency updates across all six ecosystems.
+# Grouped weekly to keep PR volume reviewable; security updates are
+# always opened immediately regardless of schedule.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+    groups:
+      actions: { patterns: ["*"] }
+  - package-ecosystem: cargo
+    directory: /sdk/rust
+    schedule: { interval: weekly }
+    groups:
+      rust: { patterns: ["*"] }
+  - package-ecosystem: cargo
+    directory: /sdk/python
+    schedule: { interval: weekly }
+    groups:
+      pyo3: { patterns: ["*"] }
+  - package-ecosystem: cargo
+    directory: /sdk/typescript
+    schedule: { interval: weekly }
+    groups:
+      napi: { patterns: ["*"] }
+  - package-ecosystem: pip
+    directory: /sdk/python
+    schedule: { interval: weekly }
+    groups:
+      python: { patterns: ["*"] }
+  - package-ecosystem: npm
+    directory: /sdk/typescript
+    schedule: { interval: weekly }
+    groups:
+      node: { patterns: ["*"] }
+  - package-ecosystem: nuget
+    directory: /sdk/dotnet
+    schedule: { interval: weekly }
+    groups:
+      dotnet: { patterns: ["*"] }
+  - package-ecosystem: gomod
+    directory: /sdk/go
+    schedule: { interval: weekly }
+    groups:
+      go: { patterns: ["*"] }

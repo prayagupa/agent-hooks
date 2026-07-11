@@ -1,0 +1,177 @@
+# Tag-driven release pipeline (arch-review NOW-11).
+#
+# Trigger: push a tag `v*` (e.g. v0.1.0-alpha.2) — one tag releases the
+# spec + all five SDKs together (VERSIONING.md). Or run manually with
+# dry_run=true to build everything and skip every upload.
+#
+# Publishing setup (one-time, per registry):
+#   PyPI   — trusted publishing (OIDC): add this repo/workflow as a
+#            publisher for project `agent-hooks-sdk` at
+#            https://pypi.org/manage/project/agent-hooks-sdk/settings/publishing/
+#            (no token; the `id-token: write` permission below is the
+#            credential).
+#   crates — secret CARGO_REGISTRY_TOKEN (scoped publish-only token from
+#            https://crates.io/settings/tokens).
+#   npm    — secret NPM_TOKEN (granular, publish-only, @responsibleai
+#            scope); `--provenance` attaches build provenance.
+#   NuGet  — secret NUGET_API_KEY (scoped to ResponsibleAI.AgentHooks).
+#   Go     — no registry: the module proxy serves the git tag directly.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build and attest everything, skip all uploads
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+env:
+  DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # PyPI trusted publishing + provenance attestation
+      attestations: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # pinned via sdk/rust/rust-toolchain.toml
+      - uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3
+      - name: Build wheel + sdist
+        run: |
+          uv tool install maturin==1.11.5
+          maturin build --release --locked -m sdk/python/Cargo.toml -o dist
+          maturin sdist -m sdk/python/Cargo.toml -o dist
+      - name: SBOM
+        uses: anchore/sbom-action@e11c554f704a0b820cbf8c51673f6945e0731532 # v0
+        with:
+          path: sdk/python
+          artifact-name: sbom-python.spdx.json
+      - name: Attest build provenance
+        if: env.DRY_RUN != 'true'
+        uses: actions/attest-build-provenance@c074443f1aee8d4aeeae555aebba3282517141b2 # v2
+        with:
+          subject-path: dist/*
+      - name: Publish to PyPI (trusted publishing)
+        if: env.DRY_RUN != 'true'
+        uses: pypa/gh-action-pypi-publish@76f52bc884231f62b9a034ebfe128415bbaabdfc # v1
+        with:
+          packages-dir: dist
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with: { name: python-dist, path: dist/* }
+
+  rust:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # pinned via sdk/rust/rust-toolchain.toml
+      - name: Package (verifies the publishable crate)
+        run: cargo package --locked -p agent-hooks-sdk
+        working-directory: sdk/rust
+      - name: SBOM
+        uses: anchore/sbom-action@e11c554f704a0b820cbf8c51673f6945e0731532 # v0
+        with:
+          path: sdk/rust
+          artifact-name: sbom-rust.spdx.json
+      - name: Attest build provenance
+        if: env.DRY_RUN != 'true'
+        uses: actions/attest-build-provenance@c074443f1aee8d4aeeae555aebba3282517141b2 # v2
+        with:
+          subject-path: sdk/rust/target/package/*.crate
+      - name: Publish to crates.io
+        if: env.DRY_RUN != 'true'
+        run: cargo publish --locked -p agent-hooks-sdk --token "$CARGO_REGISTRY_TOKEN"
+        working-directory: sdk/rust
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  typescript:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm --provenance + attestation
+      attestations: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # pinned via sdk/rust/rust-toolchain.toml
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with: { node-version: "22", registry-url: "https://registry.npmjs.org" }
+      - run: npm ci && cargo fetch --locked && npm run build && npm pack
+        working-directory: sdk/typescript
+      - name: SBOM
+        uses: anchore/sbom-action@e11c554f704a0b820cbf8c51673f6945e0731532 # v0
+        with:
+          path: sdk/typescript
+          artifact-name: sbom-typescript.spdx.json
+      - name: Attest build provenance
+        if: env.DRY_RUN != 'true'
+        uses: actions/attest-build-provenance@c074443f1aee8d4aeeae555aebba3282517141b2 # v2
+        with:
+          subject-path: sdk/typescript/*.tgz
+      - name: Publish to npm (with provenance)
+        if: env.DRY_RUN != 'true'
+        run: npm publish --provenance --access public
+        working-directory: sdk/typescript
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  dotnet:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # pinned via sdk/rust/rust-toolchain.toml
+      - run: cargo build --locked -p agent-hooks-ffi --release
+        working-directory: sdk/rust
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with: { dotnet-version: "8.0.x" }
+      - run: dotnet restore --locked-mode && dotnet pack src/AgentHooks -c Release -o dist
+        working-directory: sdk/dotnet
+      - name: SBOM
+        uses: anchore/sbom-action@e11c554f704a0b820cbf8c51673f6945e0731532 # v0
+        with:
+          path: sdk/dotnet
+          artifact-name: sbom-dotnet.spdx.json
+      - name: Attest build provenance
+        if: env.DRY_RUN != 'true'
+        uses: actions/attest-build-provenance@c074443f1aee8d4aeeae555aebba3282517141b2 # v2
+        with:
+          subject-path: sdk/dotnet/dist/*.nupkg
+      - name: Publish to NuGet
+        if: env.DRY_RUN != 'true'
+        run: dotnet nuget push dist/*.nupkg --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json
+        working-directory: sdk/dotnet
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+
+  # Go has no upload: the module proxy serves the tag. This job proves
+  # the tagged tree builds as a module consumer would see it.
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # pinned via sdk/rust/rust-toolchain.toml
+      - run: cargo build --locked -p agent-hooks-ffi --release
+        working-directory: sdk/rust
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with: { go-version: "1.22" }
+      - run: go build ./... && go test ./...
+        working-directory: sdk/go
+        env:
+          CGO_LDFLAGS: -L${{ github.workspace }}/sdk/rust/target/release -lagent_hooks_ffi
+          LD_LIBRARY_PATH: ${{ github.workspace }}/sdk/rust/target/release

@@ -1,0 +1,6 @@
+# Pinned toolchain (supply-chain: CI and local builds agree; bump
+# deliberately, not by runner-image drift). MSRV stays 1.75 in
+# Cargo.toml; this pin is what release artifacts are built with.
+[toolchain]
+channel = "1.95.0"
+components = ["clippy", "rustfmt"]
