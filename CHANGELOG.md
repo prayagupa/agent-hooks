@@ -3,6 +3,30 @@
 User-visible changes to the spec and SDKs. Versioning rules:
 [VERSIONING.md](VERSIONING.md).
 
+## Unreleased
+
+- **§12.1 admits incremental mediation.** Previously a host had to
+  assemble the complete response before `post_model_call` with no
+  exception, so a host mediating a stream incrementally (e.g. per ACS
+  §18.1) could not make a coherent conformance claim. §12.1 now
+  carries an exception: a host declaring `buffered_output: false` MAY
+  evaluate incrementally under a bounded-exposure accounting
+  discipline (verdict-covered release, terminating deny that withholds
+  the unreleased remainder, fail-closed residue at end of stream,
+  §6.1-gated durability covering withheld-but-permitted content). The
+  capability stays declaration-only: the §12.1a declaration and §13.3
+  claim MUST state the exposure bound, and conformance vectors for the
+  accounting discipline are future work. §12.1 also now distinguishes
+  an errored model call (handled per §6.1, no `post_model_call`) from
+  the `stream_incomplete` shape, which is for hosts that cannot
+  buffer. Additive; no version-surface change.
+- **§12.1a defines the caller and pins released-content identity.**
+  The caller is any consumer outside the host's enforcement boundary,
+  observers, callbacks, and preview channels included, and the content
+  released once the verdict permits MUST be the verdicted
+  (post-transform) content — a host MUST NOT rewrite content between
+  the verdict and its release.
+
 ## 0.1.0-alpha.4 — tag `v0.1.0-alpha.4`
 
 - **.NET: the NuGet package ships the native library.** The nupkg now

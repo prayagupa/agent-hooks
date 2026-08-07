@@ -1135,6 +1135,42 @@ emitting `post_model_call`. A host that cannot assemble MUST emit
 `deny` self-verdict with `host_error:streaming_unsupported`, and MUST NOT
 incorporate the partial response.
 
+Assembly that fails because the model call itself errored is an
+errored model call, not this shape: there is no complete response to
+evaluate, the host handles the failure as it handles any errored
+action — nothing partial egresses or persists (§6.1) — and
+`post_model_call` is not the vehicle for reporting the provider's
+error. The `stream_incomplete` shape above is for a host that cannot
+buffer the stream it received.
+
+**Exception — incremental mediation.** A host that declares
+`buffered_output: false` (§12.1a, §13.1) MAY instead evaluate the
+stream incrementally, emitting `post_model_call` more than once per
+response, each emission over an assembled prefix or window of it,
+provided it satisfies a bounded-exposure accounting discipline:
+
+1. no part of the response is released to the caller beyond the
+   declared exposure bound ahead of a verdict covering it;
+2. a `deny` terminates the stream and withholds everything not yet
+   released, including content an earlier emission permitted;
+3. content that no emission evaluated MUST fail closed at end of
+   stream with `host_error:streaming_unsupported` rather than settle
+   clean — the same failure mode as the non-assembling host above;
+4. durable incorporation (§6.1) is gated by the same discipline as
+   release: content withheld at termination — including content an
+   earlier emission permitted but the host had not yet released — or
+   that no emission evaluated MUST NOT be persisted.
+
+Each such emission is an ordinary `post_model_call` under §4–§7; the
+discipline governs what the host does with the verdicts, not the
+emission contract. ACS §18.1 ("Incremental stream mediation",
+[agent-control-spec](https://github.com/responsibleai/agent-control-spec))
+is one implementation of such a discipline. This exception is
+capability-shaped, not vector-backed: conformance vectors exercising
+the accounting discipline are future work, and until they exist the
+surface is visible only through the declaration and claim (§12.1a,
+§13.3).
+
 ### 12.1a Streaming to the caller
 
 A host that streams output to its caller MUST buffer the stream and
@@ -1142,12 +1178,26 @@ MUST NOT release any part of it to the caller until the `output`
 emission's combined verdict permits, UNLESS the host declares the
 capability `buffered_output: false` in its conformance surface (§13.1).
 
+For this section the *caller* is any consumer outside the host's
+enforcement boundary — host-registered observers, callbacks, and
+preview channels included — not only the far end of the connection.
+The content released once the verdict permits MUST be the verdicted
+content (the transformed value when the combined verdict is
+`transform`); a host MUST NOT rewrite content between the verdict and
+its release.
+
 A host declaring `buffered_output: false` remains conformant, but a
 `deny` at `output` then cannot retract content already streamed; the
 declaration makes that limitation visible in the conformance claim
 (§13.3) rather than leaving it implied. The CTK drives hosts with
 mocked I/O and therefore cannot exercise streaming egress; this
 capability is declaration-only.
+
+A host that additionally mediates incrementally under the §12.1
+exception MUST state its exposure bound in the declaration: which
+content can reach the caller ahead of the verdict covering it, and how
+much (e.g. "none — release is watermark-gated" or "each chunk egresses
+on arrival; evaluation runs behind the stream").
 
 ### 12.2 Parallel tool calls
 
@@ -1246,7 +1296,9 @@ plus the CTK report, recorded in `conformance/CLAIMS.md`. A claim with
 `identity_provider: null` MUST state that its approvals and records are
 identity-unbound. A claim with `buffered_output: false` MUST state
 that a `deny` at `output` cannot retract already-streamed content
-(§12.1a).
+(§12.1a), and, when the host mediates incrementally under the §12.1
+exception, MUST state the exposure bound its accounting discipline
+enforces (§12.1a).
 
 ---
 
