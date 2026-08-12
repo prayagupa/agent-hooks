@@ -1,4 +1,4 @@
-# Agent Hooks: one governance contract for every agent framework
+# Agent Hooks
 
 **Write your agent policy once. Enforce it in multiple frameworks.**
 
@@ -20,7 +20,7 @@
 ## The problem
 
 There is no standard specification for enforcing agent policy across agent
-frameworks. In that vacuum, every framework is building its own guardrail system,
+frameworks. Every framework is building its own guardrail system,
 with framework-specific interception points, context, verdicts, failure behavior,
 approvals, and audit records. A guardrail written for an agent in one framework
 cannot be reused as the same enforceable policy for an agent in another.
