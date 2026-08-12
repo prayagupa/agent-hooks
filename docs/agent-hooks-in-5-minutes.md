@@ -10,6 +10,7 @@
 - [The idea](#the-idea)
   - [The eight interception points](#the-eight-interception-points)
   - [The verdicts](#the-verdicts)
+  - [The composition profiles](#the-composition-profiles)
 - [How it fits every framework](#how-it-fits-every-framework)
 - [How a governed run flows](#how-a-governed-run-flows)
 - [In practice: one retail org](#in-practice-one-retail-org)
@@ -115,6 +116,21 @@ See [spec §5](../spec/AGENT-HOOKS-0.1.md#5-verdict) and the
 [Verdicts](../docs-site/docs/concepts/verdicts.md) concept page for the aggregation
 order and validation rules.
 
+### The composition profiles
+
+When more than one interceptor is registered, the host chooses how they run and
+how their verdicts combine.
+
+| Profile | How interceptors run | Combined result |
+| --- | --- | --- |
+| `sequential/first_deny` | in registration order; transforms flow to the next interceptor | stop at the first deny; otherwise use the last transform or allow |
+| `sequential/run_all` | in registration order; transforms flow forward and every interceptor runs | highest-severity verdict wins |
+| `parallel/strictest` | each interceptor receives the same untransformed context | highest-severity verdict wins |
+| `parallel/unanimous` | each interceptor receives the same untransformed context | proceed only when every interceptor allows |
+
+See [spec §7](../spec/AGENT-HOOKS-0.1.md#7-interceptor-contract-and-composition)
+and [Composition profiles](../docs-site/docs/concepts/composition.md).
+
 ## How it fits every framework
 
 The same policy object plugs into different host frameworks. Only one line of
@@ -174,19 +190,22 @@ it leaves the process.
 ```mermaid
 sequenceDiagram
     autonumber
-    actor User
+  actor AgentUser as Agent<br/>user
     box rgb(219,234,254) Host framework
-        participant Host as Host framework (adapter)
+    participant Host as Host framework<br/>(adapter)
     end
     box rgb(209,250,229) Agent Hooks
-        participant Engine as Agent Hooks engine
-        participant Policy as Interceptor / ACS
+    participant Engine as Agent Hooks<br/>engine
+    participant Policy as Interceptor<br/>/ ACS
     end
-    box rgb(254,243,199) Model / Tool
-        participant MT as Model / Tool
+    box rgb(254,243,199) Model
+      participant Model
+    end
+    box rgb(255,237,213) Tool
+      participant Tool
     end
 
-    User->>Host: run(request)
+    AgentUser->>Host: run(request)
 
     Host->>Engine: emit(agent_startup)
     Engine->>Policy: intercept(ctx)
@@ -198,8 +217,8 @@ sequenceDiagram
 
     Host->>Engine: emit(pre_model_call)
     Engine-->>Host: allow
-    Host->>MT: call model
-    MT-->>Host: response
+    Host->>Model: call model
+    Model-->>Host: response
     Host->>Engine: emit(post_model_call)
     Engine->>Policy: intercept(ctx)
     Policy-->>Engine: transform (redact secrets)
@@ -210,26 +229,26 @@ sequenceDiagram
     alt policy denies, or engine errors / times out
         Policy-->>Engine: deny
         Engine-->>Host: block (fail-closed)
-        Note over Host,MT: the tool is never called —<br/>the side effect is prevented before it happens
+        Note over Host,Tool: the tool is never called —<br/>the side effect is prevented before it happens
     else policy allows
         Engine-->>Host: proceed
-        Host->>MT: call tool
-        MT-->>Host: result
+        Host->>Tool: call tool
+        Tool-->>Host: result
     end
 
     Host->>Engine: emit(output)
     Engine-->>Host: allow
     Host->>Engine: emit(agent_shutdown)
-    Host-->>User: governed result
+    Host-->>AgentUser: governed result
 
     Note over Engine: every point emits a correlated,<br/>payload-free audit record
 ```
 
 ## Example: online electronics retailer org
 
-**electronics-store** is an online electronics retailer that runs agents across five teams on four
+**electronics-retailer** is an online electronics retailer that runs agents across five teams on four
 different frameworks. Governance is not written five times: the same Agent Hooks
-interceptors, versioned once in an internal `electronics-store-agent-policy` package,
+interceptors, versioned once in an internal `electronics-agent-policy-store` package,
 plug into every host.
 
 These organization-wide interceptors form the common governance baseline. Each
@@ -238,23 +257,23 @@ reimplementing or changing the shared policy.
 
 ```mermaid
 flowchart LR
-    Platform["Platform / RAI team<br/>authors the interceptors once"]
+    ERC["Enterprise Risk & Compliance team<br/>authors the interceptors once"]
 
-    subgraph Registry["Artifactory · artifacts.electronics-store.internal"]
-      Policy["electronics-store-agent-policy<br/>PII redaction · egress allowlist ·<br/>approval · destructive-deny<br/>(versioned, semver-pinned)"]
+    subgraph Registry["Artifactory · artifacts.electronics-retailer.internal"]
+      Policy["electronics-agent-policy-store<br/>PII redaction · egress allowlist ·<br/>approval · destructive-deny<br/>(versioned, semver-pinned)"]
     end
 
-    subgraph Agents["electronics-store agents — each enforces via Agent Hooks"]
-      Shop["Storefront<br/>shop.electronics-store.example · OpenAI Agents"]
-      Help["Support<br/>help.electronics-store.example · CrewAI"]
-      Ops["Fulfillment<br/>ops.electronics-store.internal · Google ADK"]
-      Insights["Merchandising<br/>insights.electronics-store.internal · MS Agent Framework"]
-      Tools["DevTools<br/>tools.electronics-store.internal · MS Agent Framework"]
+    subgraph Agents["electronics-retailer agents — each enforces via Agent Hooks"]
+      Shop["Storefront<br/>shop.electronics-retailer.example · OpenAI Agents"]
+      Help["Support<br/>help.electronics-retailer.example · CrewAI"]
+      Ops["Fulfillment<br/>ops.electronics-retailer.internal · Google ADK"]
+      Insights["Merchandising<br/>insights.electronics-retailer.internal · MS Agent Framework"]
+      Tools["DevTools<br/>tools.electronics-retailer.internal · MS Agent Framework"]
     end
 
-    Audit[("audit.electronics-store.internal<br/>payload-free records")]
+    Audit[("audit.electronics-retailer.internal<br/>payload-free records")]
 
-    Platform -->|publish · version| Policy
+    ERC -->|publish · version| Policy
     Policy -->|pull| Shop
     Policy -->|pull| Help
     Policy -->|pull| Ops
@@ -266,31 +285,31 @@ flowchart LR
     classDef hooks fill:#d1fae5,stroke:#10b981,color:#064e3b;
     classDef audit fill:#fef3c7,stroke:#f59e0b,color:#7c2d12;
     class Shop,Help,Ops,Insights,Tools host;
-    class Policy,Platform hooks;
+    class Policy,ERC hooks;
     class Audit audit;
 ```
 
 | Team / agent | Domain | Framework | Reused org policy |
 | --- | --- | --- | --- |
-| Storefront shopping assistant | `shop.electronics-store.example` | OpenAI Agents | PII redaction · egress allowlist · injection deny |
-| Customer-support agent | `help.electronics-store.example` | CrewAI | refund approval · PII redaction · audit |
-| Fulfillment & warehouse ops | `ops.electronics-store.internal` | Google ADK | destructive-tool deny · stock-write approval |
-| Merchandising & pricing analyst | `insights.electronics-store.internal` | MS Agent Framework | data-domain allowlist · no-write guardrail |
-| Internal DevTools agent | `tools.electronics-store.internal` | MS Agent Framework | `pre_tool_call` deny on prod-touching commands |
+| Storefront shopping assistant | `shop.electronics-retailer.example` | OpenAI Agents | PII redaction · egress allowlist · injection deny |
+| Customer-support agent | `help.electronics-retailer.example` | CrewAI | refund approval · PII redaction · audit |
+| Fulfillment & warehouse ops | `ops.electronics-retailer.internal` | Google ADK | destructive-tool deny · stock-write approval |
+| Merchandising & pricing analyst | `insights.electronics-retailer.internal` | MS Agent Framework | data-domain allowlist · no-write guardrail |
+| Internal DevTools agent | `tools.electronics-retailer.internal` | MS Agent Framework | `pre_tool_call` deny on prod-touching commands |
 
 Four interceptors, written once, cover every agent above:
 
 1. **PII / PCI redaction** — at `post_model_call` and `output`, strip customer
-  PII and any card data flowing from `payments.electronics-store.example`, so it never
+  PII and any card data flowing from `payments.electronics-retailer.example`, so it never
    reaches the model or the caller.
 2. **Egress allowlist** — at `pre_tool_call`, `deny` any HTTP tool whose host is
-  not under `*.electronics-store.example` or `*.electronics-store.internal`; a support agent
+  not under `*.electronics-retailer.example` or `*.electronics-retailer.internal`; a support agent
    can't be steered into calling `pastebin.example`.
 3. **Human approval for money & inventory** — refunds over a threshold or stock
    writes `escalate` for sign-off before the side effect runs.
 4. **Destructive-action deny + audit** — `delete_*` / `drop_*` / prod deploys are
    denied outright, and every decision emits a payload-free record to
-  `audit.electronics-store.internal`.
+  `audit.electronics-retailer.internal`.
 
 ## Where to go next
 
@@ -315,7 +334,3 @@ Four interceptors, written once, cover every agent above:
 - **Running it in production** — [PRODUCTION.md](PRODUCTION.md) and
   [OPERATIONS.md](OPERATIONS.md).
 - **FAQ** — [common questions](../docs-site/docs/faq.md).
-
----
-
-**Write policy once. Run it in every agent your organization ships.**
