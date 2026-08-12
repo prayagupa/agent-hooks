@@ -40,7 +40,7 @@ contract that every host is obligated to enforce.
 
 **Agent Hooks** is a single, framework-neutral governance contract. You write an
 interceptor (or point an [ACS](https://github.com/microsoft/agent-governance-toolkit)
-manifest) at it once, and any host that speaks the contract enforces it
+manifest) once, and any host that speaks the contract enforces it
 identically:
 
 1. **Eight fixed lifecycle interception points** — a JSON-shaped context at each
@@ -55,15 +55,16 @@ identically:
 4. **Payload-free audit records** — every decision is correlated and traceable
    ([spec §10.3](../spec/AGENT-HOOKS-0.1.md#103-the-interception-record)).
 
-Each framework stays the **host adapter**: it owns the call sites, builds the
-context, and enforces the returned verdict. Agent Hooks is the portable
-**policy engine** the host consults and is obligated to honor — it does not
-replace native hooks, it gives them the one job they were never meant to do.
+Each framework will have the **host adapter**: it owns the call sites, builds the
+hook context, and enforces the returned verdict. Agent Hooks is the portable
+**policy engine** the host consults and is obligated to honor. It complements
+native hooks by providing a standard governance contract.
 
-Putting policy *inside* an application hook forces one seam to serve both
-masters — and, because those hooks are fail-open by design, to silently swallow a
-governance failure. Agent Hooks keeps the seams separate so each retains its own
-failure mode, owner, and audit trail.
+Application hooks are designed to extend framework behavior, not enforce
+governance. Embedding policy in them ties enforcement to framework-specific
+failure handling, which may allow a policy failure to go unenforced. Agent Hooks
+keeps the seams separate so each retains its own failure mode, owner, and audit
+trail.
 
 > **Trust model.** Agent Hooks is a *cooperative contract, not a security
 > boundary*. The host and the interceptors it registers are trusted, and nothing
@@ -116,7 +117,7 @@ order and validation rules.
 
 ## How it fits every framework
 
-The same policy object plugs into five different hosts. Only the one-line
+The same policy object plugs into different host frameworks. Only one line of
 registration changes.
 
 ```mermaid
@@ -159,7 +160,7 @@ flowchart LR
 | **Microsoft Agent Framework** | `Agent(client=..., middleware=use_agent_hooks(policy))` |
 | **Goose** (Rust) | `install(\|\| AgentHooksInspector::builder().register(policy).build())` |
 
-Each adapter ships in its own framework project; this repo holds the engine and
+Each adapter ships in its own framework project. agent-hooks library holds the engine and
 the language SDKs (Python, TypeScript, Rust, .NET, Go). To build a host or an
 interceptor, start from a [quickstart](../docs-site/docs/quickstart/python.md).
 
@@ -224,12 +225,16 @@ sequenceDiagram
     Note over Engine: every point emits a correlated,<br/>payload-free audit record
 ```
 
-## In practice: one retail org
+## Example: online electronics retailer org
 
-**electronics-store** — an online electronics retailer — runs agents across five teams on four
+**electronics-store** is an online electronics retailer that runs agents across five teams on four
 different frameworks. Governance is not written five times: the same Agent Hooks
 interceptors, versioned once in an internal `electronics-store-agent-policy` package,
 plug into every host.
+
+These organization-wide interceptors form the common governance baseline. Each
+team can add its own domain-specific interceptors to the same stack without
+reimplementing or changing the shared policy.
 
 ```mermaid
 flowchart LR
