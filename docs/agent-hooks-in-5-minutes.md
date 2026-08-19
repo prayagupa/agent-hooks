@@ -55,6 +55,8 @@ identically:
    ([spec §6.3](../spec/AGENT-HOOKS-0.1.md#63-failure-handling)).
 4. **Payload-free audit records** — every decision is correlated and traceable
    ([spec §10.3](../spec/AGENT-HOOKS-0.1.md#103-the-interception-record)).
+5. **Open ecosystem stewardship** — Agent Hooks is being donated to the Agentic
+  AI Foundation (AAIF) for vendor-neutral, community-led stewardship.
 
 Each framework will have the **host adapter**: it owns the call sites, builds the
 hook context, and enforces the returned verdict. Agent Hooks is the portable
@@ -139,11 +141,11 @@ registration changes.
 ```mermaid
 flowchart LR
     subgraph Hosts["Host frameworks — adapters"]
-        ADK["Google ADK<br/>AgentHooksPlugin"]
-        Crew["CrewAI<br/>use_agent_hooks()"]
-        OAI["OpenAI Agents<br/>RunConfig(agent_hooks=…)"]
-        MAF["MS Agent Framework<br/>use_agent_hooks() middleware"]
-        Goose["Goose · Rust<br/>AgentHooksInspector"]
+  Host1["Framework 1<br/>plugin adapter"]
+  Host2["Framework 2<br/>context adapter"]
+  Host3["Framework 3<br/>run-config adapter"]
+  Host4["Framework 4<br/>middleware adapter"]
+  Host5["Framework 5<br/>inspector adapter"]
     end
 
     subgraph Engine["Agent Hooks engine — framework-neutral"]
@@ -153,28 +155,28 @@ flowchart LR
 
     Policy["Your policy, written once<br/>ACS manifest / Interceptor<br/>allow · deny · transform"]
 
-    ADK --> Emit
-    Crew --> Emit
-    OAI --> Emit
-    MAF --> Emit
-    Goose --> Emit
+    Host1 --> Emit
+    Host2 --> Emit
+    Host3 --> Emit
+    Host4 --> Emit
+    Host5 --> Emit
     Emit --> Comp --> Policy
     Policy -->|verdict| Emit
     Emit -->|enforced decision + audit record| Hosts
 
     classDef host fill:#dbeafe,stroke:#3b82f6,color:#0f172a;
     classDef hooks fill:#d1fae5,stroke:#10b981,color:#064e3b;
-    class ADK,Crew,OAI,MAF,Goose host;
+    class Host1,Host2,Host3,Host4,Host5 host;
     class Emit,Comp,Policy hooks;
 ```
 
-| Framework | Drop-in |
+| Framework | Illustrative adapter shape |
 | --- | --- |
-| **Google ADK** | `App(plugins=[AgentHooksPlugin(interceptors=[policy])])` |
-| **CrewAI** | `with use_agent_hooks(policy): crew.kickoff()` |
-| **OpenAI Agents** | `Runner.run(..., run_config=RunConfig(agent_hooks=AgentHooksConfig(interceptors=[policy])))` |
-| **Microsoft Agent Framework** | `Agent(client=..., middleware=use_agent_hooks(policy))` |
-| **Goose** (Rust) | `install(\|\| AgentHooksInspector::builder().register(policy).build())` |
+| **Framework 1** | Plugin: `host.add_plugin(agent_hooks(policy))` |
+| **Framework 2** | Context: `with agent_hooks(policy): host.run()` |
+| **Framework 3** | Run config: `host.run(config=agent_hooks(policy))` |
+| **Framework 4** | Middleware: `host.use_middleware(agent_hooks(policy))` |
+| **Framework 5** | Inspector: `host.install_inspector(agent_hooks(policy))` |
 
 Each adapter ships in its own framework project. agent-hooks library holds the engine and
 the language SDKs (Python, TypeScript, Rust, .NET, Go). To build a host or an
@@ -264,11 +266,11 @@ flowchart LR
     end
 
     subgraph Agents["electronics-retailer agents — each enforces via Agent Hooks"]
-      Shop["Storefront<br/>shop.electronics-retailer.example · OpenAI Agents"]
-      Help["Support<br/>help.electronics-retailer.example · CrewAI"]
-      Ops["Fulfillment<br/>ops.electronics-retailer.internal · Google ADK"]
-      Insights["Merchandising<br/>insights.electronics-retailer.internal · MS Agent Framework"]
-      Tools["DevTools<br/>tools.electronics-retailer.internal · MS Agent Framework"]
+      Shop["Storefront<br/>shop.electronics-retailer.example · Framework 3"]
+      Help["Support<br/>help.electronics-retailer.example · Framework 2"]
+      Ops["Fulfillment<br/>ops.electronics-retailer.internal · Framework 1"]
+      Insights["Merchandising<br/>insights.electronics-retailer.internal · Framework 4"]
+      Tools["DevTools<br/>tools.electronics-retailer.internal · Framework 4"]
     end
 
     Audit[("audit.electronics-retailer.internal<br/>payload-free records")]
@@ -291,11 +293,11 @@ flowchart LR
 
 | Team / agent | Domain | Framework | Reused org policy |
 | --- | --- | --- | --- |
-| Storefront shopping assistant | `shop.electronics-retailer.example` | OpenAI Agents | PII redaction · egress allowlist · injection deny |
-| Customer-support agent | `help.electronics-retailer.example` | CrewAI | refund approval · PII redaction · audit |
-| Fulfillment & warehouse ops | `ops.electronics-retailer.internal` | Google ADK | destructive-tool deny · stock-write approval |
-| Merchandising & pricing analyst | `insights.electronics-retailer.internal` | MS Agent Framework | data-domain allowlist · no-write guardrail |
-| Internal DevTools agent | `tools.electronics-retailer.internal` | MS Agent Framework | `pre_tool_call` deny on prod-touching commands |
+| Storefront shopping assistant | `shop.electronics-retailer.example` | Framework 3 | PII redaction · egress allowlist · injection deny |
+| Customer-support agent | `help.electronics-retailer.example` | Framework 2 | refund approval · PII redaction · audit |
+| Fulfillment & warehouse ops | `ops.electronics-retailer.internal` | Framework 1 | destructive-tool deny · stock-write approval |
+| Merchandising & pricing analyst | `insights.electronics-retailer.internal` | Framework 4 | data-domain allowlist · no-write guardrail |
+| Internal DevTools agent | `tools.electronics-retailer.internal` | Framework 4 | `pre_tool_call` deny on prod-touching commands |
 
 Four interceptors, written once, cover every agent above:
 
